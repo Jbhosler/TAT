@@ -3,6 +3,8 @@ import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import LandingPage from './components/LandingPage';
 import Dashboard from './components/Dashboard';
 import AdminPanel from './components/admin/AdminPanel';
+import ScenariosPage from './components/ScenariosPage';
+import ProspectResultPage from './components/ProspectResultPage';
 
 function App() {
   // Use state to track auth so React re-renders when it changes
@@ -60,9 +62,15 @@ function App() {
           }
         />
         <Route
-          path="/prospect/:id?"
+          path="/scenarios"
           element={
-            isAuthenticated() ? <Navigate to="/dashboard" replace /> : <Navigate to="/" replace />
+            isAuthenticated() ? <ScenariosPage /> : <Navigate to="/" replace />
+          }
+        />
+        <Route
+          path="/prospect/:id"
+          element={
+            isAuthenticated() ? <ProspectResultPage /> : <Navigate to="/" replace />
           }
         />
       </Routes>

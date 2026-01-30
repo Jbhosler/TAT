@@ -20,7 +20,13 @@ const AdminPanel = () => {
                 </h1>
               </div>
             </div>
-            <div className="flex items-center">
+            <div className="flex items-center gap-4">
+              <Link
+                to="/scenarios"
+                className="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium"
+              >
+                Scenarios
+              </Link>
               <Link
                 to="/dashboard"
                 className="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium"

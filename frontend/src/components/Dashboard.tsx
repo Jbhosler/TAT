@@ -71,6 +71,17 @@ const Dashboard = () => {
     setStep('calculate');
   };
 
+  const handleBackToMapping = async () => {
+    if (!prospectId) return;
+    try {
+      const unmapped = await prospectsAPI.getUnmapped(prospectId);
+      setUnmappedHoldings(unmapped.data ?? []);
+      setStep('map');
+    } catch {
+      setStep('map');
+    }
+  };
+
   const handleCalculate = async () => {
     if (!prospectId) return;
     try {
@@ -113,6 +124,12 @@ const Dashboard = () => {
                   className="border-indigo-500 text-gray-900 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium"
                 >
                   Dashboard
+                </Link>
+                <Link
+                  to="/scenarios"
+                  className="border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium"
+                >
+                  Scenarios
                 </Link>
                 <Link
                   to="/admin"
@@ -273,12 +290,36 @@ const Dashboard = () => {
             </div>
           )}
 
-          {step === 'map' && prospectId && (
+          {step === 'map' && prospectId && unmappedHoldings.length > 0 && (
             <MappingWizard
               prospectId={prospectId}
               unmappedHoldings={unmappedHoldings}
               onMappingComplete={handleMappingComplete}
             />
+          )}
+          {step === 'map' && prospectId && unmappedHoldings.length === 0 && (
+            <div className="bg-white shadow rounded-lg p-6">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">
+                Mapping
+              </h2>
+              <p className="text-gray-700 mb-4">
+                All holdings are mapped. You can proceed to calculate or re-run Classify to change how holdings are classified.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  onClick={() => setStep('calculate')}
+                  className="flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
+                >
+                  Proceed to Calculate
+                </button>
+                <button
+                  onClick={handleBackToMapping}
+                  className="flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                >
+                  Refresh mapping status
+                </button>
+              </div>
+            </div>
           )}
 
           {step === 'calculate' && (
@@ -289,12 +330,20 @@ const Dashboard = () => {
               <p className="text-gray-700 mb-4">
                 All holdings have been mapped. Ready to calculate the transition.
               </p>
-              <button
-                onClick={handleCalculate}
-                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
-              >
-                Calculate Transition
-              </button>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  onClick={handleCalculate}
+                  className="flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
+                >
+                  Calculate Transition
+                </button>
+                <button
+                  onClick={handleBackToMapping}
+                  className="flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                >
+                  Back to mapping
+                </button>
+              </div>
             </div>
           )}
 
@@ -319,16 +368,24 @@ const Dashboard = () => {
                       $
                       {Number(transitionResult.total_realized_gain_loss).toLocaleString(
                         'en-US',
-                        { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+                        { minimumFractionDigits: 0, maximumFractionDigits: 0 }
                       )}
                     </p>
                   </div>
-                  <button
-                    onClick={handleCalculate}
-                    className="text-sm text-indigo-600 hover:text-indigo-800"
-                  >
-                    Recalculate
-                  </button>
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      onClick={handleCalculate}
+                      className="text-sm text-indigo-600 hover:text-indigo-800"
+                    >
+                      Recalculate
+                    </button>
+                    <button
+                      onClick={handleBackToMapping}
+                      className="text-sm text-gray-600 hover:text-gray-800"
+                    >
+                      Back to mapping
+                    </button>
+                  </div>
                 </div>
               </div>
 

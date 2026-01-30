@@ -1,7 +1,7 @@
 """
 SQLAlchemy database models for the Tax-Aware Transition Tool.
 """
-from sqlalchemy import Column, String, Integer, Numeric, Boolean, ForeignKey, DateTime, JSON, Enum as SQLEnum
+from sqlalchemy import Column, String, Integer, Numeric, Boolean, ForeignKey, DateTime, JSON, Enum as SQLEnum, LargeBinary
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -28,6 +28,7 @@ class MappingStatus(str, enum.Enum):
     MAPPED = "mapped"
     UNMAPPED = "unmapped"
     MULTI_ASSET = "multi_asset"
+    FORCED_SALE = "forced_sale"  # User chose not to map; holding is liquidated (forced sale)
 
 
 class BaseModel:
@@ -108,6 +109,8 @@ class Prospect(Base):
     strategy_id = Column(UUID(as_uuid=True), ForeignKey("strategies.id"), nullable=False)
     name = Column(String(255), nullable=False)
     total_value = Column(Numeric(15, 2), nullable=False)
+    document_pdf = Column(LargeBinary, nullable=True)
+    document_filename = Column(String(255), nullable=True)
     
     # Relationships
     strategy = relationship("Strategy", back_populates="prospects")
@@ -159,6 +162,8 @@ class TransitionResult(Base):
     buy_orders = Column(JSONB, nullable=False)  # [{model_ticker, value, asset_class}]
     cash_residual = Column(Numeric(15, 2), nullable=False)
     total_realized_gain_loss = Column(Numeric(15, 2), nullable=False)
+    pre_holdings = Column(JSONB, nullable=True)   # [{ticker, asset_class, value}] legacy by asset class
+    post_holdings = Column(JSONB, nullable=True)  # [{model_ticker, asset_class, value}] proposed by asset class
     
     # Relationships
     prospect = relationship("Prospect", back_populates="transition_results")

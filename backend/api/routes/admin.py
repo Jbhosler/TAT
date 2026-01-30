@@ -1,7 +1,7 @@
 """
 Admin panel endpoints.
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from typing import List
 from uuid import UUID
@@ -38,16 +38,20 @@ async def get_product_equivalents(
 
 @router.post("/product-equivalents/{strategy_id}")
 async def upload_product_equivalents(
+    request: Request,
     strategy_id: UUID,
-    csv_content: str,
     db: Session = Depends(get_db)
 ):
-    """Upload GE_Alt.csv (Product Equivalents) for a strategy."""
+    """Upload GE_Alt.csv (Product Equivalents) for a strategy. Accepts raw CSV body (text/csv or text/plain)."""
     # Verify strategy exists
     strategy = db.query(Strategy).filter(Strategy.id == strategy_id).first()
     if not strategy:
         raise HTTPException(status_code=404, detail="Strategy not found")
-    
+
+    # Read raw body so we accept text/csv (FastAPI would otherwise expect JSON and return 422)
+    body = await request.body()
+    csv_content = body.decode("utf-8-sig").strip()  # utf-8-sig strips BOM if present
+
     try:
         equivalents_data = parse_product_equivalents_csv(csv_content)
         

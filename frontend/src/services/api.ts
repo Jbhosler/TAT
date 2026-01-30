@@ -3,11 +3,11 @@
  */
 import axios from 'axios';
 
-// In production, this should be set to your Cloud Run backend URL
-// For local development, use http://localhost:8000
-const API_BASE_URL = import.meta.env.VITE_API_URL || 
-  (import.meta.env.PROD 
-    ? 'https://tat-backend-vzkn2vygsa-uc.a.run.app' 
+// In production, use Cloud Run backend URL. For local dev, use localhost.
+// Set VITE_API_URL when building if your backend is at a different URL.
+const API_BASE_URL = import.meta.env.VITE_API_URL ||
+  (import.meta.env.PROD
+    ? 'https://tat-backend-vzkn2vygsa-uc.a.run.app'
     : 'http://localhost:8000');
 
 const api = axios.create({
@@ -66,16 +66,27 @@ export const strategiesAPI = {
 
 // Prospects API
 export const prospectsAPI = {
+  list: () => api.get('/api/prospects'),
+  get: (id: string) => api.get(`/api/prospects/${id}`),
+  getDocument: (id: string) => api.get(`/api/prospects/${id}/document`, { responseType: 'blob' }),
+  uploadDocument: (id: string, file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return api.post(`/api/prospects/${id}/document`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
   upload: (strategyId: string, name: string, csvContent: string) =>
-    api.post('/api/prospects/upload', null, {
+    api.post('/api/prospects/upload', csvContent, {
       params: { strategy_id: strategyId, name },
-      data: csvContent,
       headers: { 'Content-Type': 'text/csv' },
     }),
   classify: (id: string) => api.post(`/api/prospects/${id}/classify`),
   getUnmapped: (id: string) => api.get(`/api/prospects/${id}/unmapped`),
   saveMapping: (id: string, mapping: any) =>
     api.post(`/api/prospects/${id}/map`, mapping),
+  markForcedSale: (id: string, legacyTicker: string) =>
+    api.post(`/api/prospects/${id}/force-sale`, { legacy_ticker: legacyTicker }),
   calculate: (id: string) => api.post(`/api/prospects/${id}/calculate`),
   getResult: (id: string) => api.get(`/api/prospects/${id}/result`),
   staleCheck: (id: string) => api.get(`/api/prospects/${id}/stale-check`),

@@ -27,6 +27,7 @@ const ProspectUpload = ({
 }: ProspectUploadProps) => {
   const [prospectName, setProspectName] = useState('');
   const [csvContent, setCsvContent] = useState('');
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [preview, setPreview] = useState<any[]>([]);
   const [inputMode, setInputMode] = useState<'upload' | 'manual'>('manual');
@@ -123,7 +124,16 @@ const ProspectUpload = ({
     setLoading(true);
     try {
       const response = await prospectsAPI.upload(selectedStrategyId, prospectName, content);
-      onUploadComplete(response.data.id);
+      const prospectId = response.data.id;
+      if (pdfFile) {
+        try {
+          await prospectsAPI.uploadDocument(prospectId, pdfFile);
+        } catch (docErr: any) {
+          alert(docErr.response?.data?.detail || 'Prospect created but PDF upload failed.');
+        }
+        setPdfFile(null);
+      }
+      onUploadComplete(prospectId);
     } catch (err: any) {
       alert(err.response?.data?.detail || 'Failed to upload prospect');
     } finally {
@@ -163,14 +173,31 @@ const ProspectUpload = ({
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Prospect name
         </label>
-          <input
-            type="text"
-            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-            value={prospectName}
-            onChange={(e) => setProspectName(e.target.value)}
-            placeholder="Enter prospect name"
-          />
-        </div>
+        <input
+          type="text"
+          className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+          value={prospectName}
+          onChange={(e) => setProspectName(e.target.value)}
+          placeholder="Enter prospect name"
+        />
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Optional: Attach PDF
+        </label>
+        <input
+          type="file"
+          accept=".pdf,application/pdf"
+          className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
+          onChange={(e) => setPdfFile(e.target.files?.[0] ?? null)}
+        />
+        {pdfFile && (
+          <p className="mt-1 text-sm text-gray-500">
+            Selected: {pdfFile.name}
+          </p>
+        )}
+      </div>
 
         {/* Input mode: Manual entry vs CSV upload */}
         <div>
@@ -299,10 +326,12 @@ const ProspectUpload = ({
               />
               {preview.length > 0 && (
                 <div className="mt-4">
-                  <h3 className="text-sm font-medium text-gray-700 mb-2">Preview</h3>
-                  <div className="overflow-x-auto border border-gray-200 rounded-md">
+                  <h3 className="text-sm font-medium text-gray-700 mb-2">
+                    Preview ({preview.length} row{preview.length !== 1 ? 's' : ''})
+                  </h3>
+                  <div className="overflow-x-auto max-h-60 overflow-y-auto border border-gray-200 rounded-md">
                     <table className="min-w-full divide-y divide-gray-200">
-                      <thead className="bg-gray-50">
+                      <thead className="bg-gray-50 sticky top-0">
                         <tr>
                           {Object.keys(preview[0]).map((header) => (
                             <th
@@ -315,7 +344,7 @@ const ProspectUpload = ({
                         </tr>
                       </thead>
                       <tbody className="bg-white divide-y divide-gray-200">
-                        {preview.slice(0, 5).map((row, index) => (
+                        {preview.map((row, index) => (
                           <tr key={index}>
                             {Object.values(row).map((value: any, i) => (
                               <td

@@ -61,43 +61,97 @@ def parse_strategy_bulk_upload(csv_content: str) -> List[Dict[str, Any]]:
     return list(strategies.values())
 
 
+def _parse_prospect_amount(s: str) -> Decimal:
+    """Parse amount string: strip $ and commas, treat (1,234.56) as negative, empty/N/A as 0."""
+    if not s or not isinstance(s, str):
+        return Decimal("0")
+    s = s.strip().replace("$", "").replace(",", "").strip()
+    if not s or s.upper() in ("N/A", "NA", "-", "--", ""):
+        return Decimal("0")
+    # Accounting format: (123.45) means -123.45
+    if s.startswith("(") and s.endswith(")"):
+        s = "-" + s[1:-1].strip()
+    try:
+        return Decimal(s)
+    except Exception:
+        return Decimal("0")
+
+
 def parse_prospect_csv(csv_content: str) -> List[Dict[str, Any]]:
     """
     Parse Prospect CSV.
-    Format: Ticker, Value ($), Unrealized Gain/Loss ($)
-    
-    Args:
-        csv_content: CSV file content as string
-        
-    Returns:
-        List of prospect holding dictionaries
+    Format: Ticker, Value ($), Unrealized Gain/Loss ($) — headers flexible (case-insensitive, BOM stripped).
+    Skips rows with empty ticker. Tolerates bad/missing numbers (treats as 0).
     """
+    csv_content = (csv_content or "").strip().strip("\ufeff")
+    if not csv_content:
+        return []
+    # Normalize line endings so DictReader sees one row per line (avoids \\r-only or mixed \\r\\n/\\n)
+    csv_content = csv_content.replace("\r\n", "\n").replace("\r", "\n")
+
     reader = csv.DictReader(io.StringIO(csv_content))
-    
     holdings = []
-    
+
     for row in reader:
-        ticker = row['Ticker'].strip()
-        # Handle different possible column names
-        value_str = row.get('Value ($)', row.get('Value', '0')).strip().replace('$', '').replace(',', '')
-        gain_loss_str = row.get('Unrealized Gain/Loss ($)', row.get('Unrealized Gain/Loss', '0')).strip().replace('$', '').replace(',', '')
-        
-        value = Decimal(value_str)
-        unrealized_gain_loss = Decimal(gain_loss_str)
-        
+        if not any(v is not None and str(v).strip() for v in row.values()):
+            continue
+        try:
+            ticker = _get_column(row, ["Ticker", "ticker", "Symbol", "symbol"])
+        except KeyError:
+            continue
+        if not ticker:
+            continue
+        try:
+            value_str = _get_column_optional(row, ["Value ($)", "Value", "value"], "0")
+            gain_loss_str = _get_column_optional(row, ["Unrealized Gain/Loss ($)", "Unrealized Gain/Loss", "Gain/Loss", "Unrealized", "unrealized"], "0")
+            value = _parse_prospect_amount(str(value_str))
+            unrealized_gain_loss = _parse_prospect_amount(str(gain_loss_str))
+        except Exception:
+            # Skip row on any parse error so one bad row doesn't stop the whole upload
+            continue
         holdings.append({
-            'ticker': ticker,
-            'value': value,
-            'unrealized_gain_loss': unrealized_gain_loss
+            "ticker": ticker,
+            "value": value,
+            "unrealized_gain_loss": unrealized_gain_loss,
         })
-    
+
     return holdings
+
+
+def _normalize_header(name: str) -> str:
+    """Strip BOM and whitespace for case-insensitive header matching."""
+    if not name:
+        return ""
+    s = name.strip().strip("\ufeff")
+    return s
+
+
+def _get_column(row: dict, possible_names: list) -> str:
+    """Get value from row using first matching column name (case-insensitive)."""
+    row_lower = {_normalize_header(k).lower(): (k, v) for k, v in row.items()}
+    for name in possible_names:
+        key = name.lower().strip()
+        if key in row_lower:
+            _, val = row_lower[key]
+            return (val or "").strip()
+    raise KeyError(f"Expected one of columns: {possible_names}. Found: {list(row.keys())}")
+
+
+def _get_column_optional(row: dict, possible_names: list, default: str = "") -> str:
+    """Like _get_column but returns default if no column matches."""
+    row_lower = {_normalize_header(k).lower(): (k, v) for k, v in row.items()}
+    for name in possible_names:
+        key = name.lower().strip()
+        if key in row_lower:
+            _, val = row_lower[key]
+            return (val or "").strip()
+    return default
 
 
 def parse_product_equivalents_csv(csv_content: str) -> List[Dict[str, Any]]:
     """
     Parse GE_Alt.csv (Product Equivalents).
-    Format: Legacy Ticker, Model Ticker, Grade
+    Format: Legacy Ticker, Model Ticker, Grade (headers flexible: case-insensitive, BOM stripped)
     
     Args:
         csv_content: CSV file content as string
@@ -105,23 +159,31 @@ def parse_product_equivalents_csv(csv_content: str) -> List[Dict[str, Any]]:
     Returns:
         List of product equivalent dictionaries
     """
+    csv_content = (csv_content or "").strip().strip("\ufeff")
+    if not csv_content:
+        return []
+
     reader = csv.DictReader(io.StringIO(csv_content))
-    
     equivalents = []
-    
+
     for row in reader:
-        legacy_ticker = row['Legacy Ticker'].strip()
-        model_ticker = row['Model Ticker'].strip()
-        grade = int(row['Grade'].strip())
-        
-        # Validate grade
+        if not any(v and str(v).strip() for v in row.values()):
+            continue
+        legacy_ticker = _get_column(row, ["Legacy Ticker", "legacy_ticker"])
+        model_ticker = _get_column(row, ["Model Ticker", "model_ticker"])
+        grade_str = _get_column(row, ["Grade", "grade"])
+        if not grade_str:
+            raise ValueError("Grade is required for each row.")
+        try:
+            grade = int(grade_str)
+        except ValueError:
+            raise ValueError(f"Grade must be a number (0, 1, or 2). Got: {grade_str!r}")
         if grade not in [0, 1, 2]:
             raise ValueError(f"Invalid grade: {grade}. Must be 0, 1, or 2.")
-        
         equivalents.append({
-            'legacy_ticker': legacy_ticker,
-            'model_ticker': model_ticker,
-            'grade': grade
+            "legacy_ticker": legacy_ticker,
+            "model_ticker": model_ticker,
+            "grade": grade,
         })
-    
+
     return equivalents

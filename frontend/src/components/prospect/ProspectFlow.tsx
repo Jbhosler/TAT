@@ -84,6 +84,17 @@ const ProspectFlow = () => {
     setStep('calculate');
   };
 
+  const handleBackToMapping = async () => {
+    if (!prospectId) return;
+    try {
+      const unmapped = await prospectsAPI.getUnmapped(prospectId);
+      setUnmappedHoldings(unmapped.data ?? []);
+      setStep('map');
+    } catch {
+      setStep('map');
+    }
+  };
+
   const handleCalculate = async () => {
     if (!prospectId) return;
 
@@ -182,12 +193,34 @@ const ProspectFlow = () => {
             </div>
           )}
 
-          {step === 'map' && (
+          {step === 'map' && unmappedHoldings.length > 0 && (
             <MappingWizard
               prospectId={prospectId!}
               unmappedHoldings={unmappedHoldings}
               onMappingComplete={handleMappingComplete}
             />
+          )}
+          {step === 'map' && unmappedHoldings.length === 0 && (
+            <div className="bg-white shadow rounded-lg p-6">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Mapping</h2>
+              <p className="text-gray-700 mb-4">
+                All holdings are mapped. You can proceed to calculate or re-run Classify to change how holdings are classified.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  onClick={() => setStep('calculate')}
+                  className="flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
+                >
+                  Proceed to Calculate
+                </button>
+                <button
+                  onClick={handleBackToMapping}
+                  className="flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                >
+                  Refresh mapping status
+                </button>
+              </div>
+            </div>
           )}
 
           {step === 'calculate' && (
@@ -198,12 +231,20 @@ const ProspectFlow = () => {
               <p className="text-gray-700 mb-4">
                 All holdings have been mapped. Ready to calculate the transition.
               </p>
-              <button
-                onClick={handleCalculate}
-                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
-              >
-                Calculate Transition
-              </button>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  onClick={handleCalculate}
+                  className="flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
+                >
+                  Calculate Transition
+                </button>
+                <button
+                  onClick={handleBackToMapping}
+                  className="flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                >
+                  Back to mapping
+                </button>
+              </div>
             </div>
           )}
 
@@ -220,18 +261,26 @@ const ProspectFlow = () => {
                   <p className={`text-lg font-bold ${
                     transitionResult.total_realized_gain_loss >= 0 ? 'text-red-600' : 'text-green-600'
                   }`}>
-                    ${transitionResult.total_realized_gain_loss?.toLocaleString('en-US', {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
+                    ${Number(transitionResult.total_realized_gain_loss ?? 0).toLocaleString('en-US', {
+                      minimumFractionDigits: 0,
+                      maximumFractionDigits: 0,
                     })}
                   </p>
                 </div>
-                <button
-                  onClick={() => navigate('/dashboard')}
-                  className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
-                >
-                  View in Dashboard
-                </button>
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    onClick={() => navigate('/dashboard')}
+                    className="flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
+                  >
+                    View in Dashboard
+                  </button>
+                  <button
+                    onClick={handleBackToMapping}
+                    className="flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                  >
+                    Back to mapping
+                  </button>
+                </div>
               </div>
             </div>
           )}

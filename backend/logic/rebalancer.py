@@ -66,16 +66,37 @@ class BuyOrder:
 
 
 @dataclass
+class PreHolding:
+    """Legacy holding for pre-trade display (ticker, asset class, value)."""
+    ticker: str
+    asset_class: str
+    value: Decimal
+
+
+@dataclass
+class PostHolding:
+    """Proposed holding for post-trade display (model ticker, asset class, value; optional legacy ticker)."""
+    model_ticker: str
+    asset_class: str
+    value: Decimal
+    ticker: Optional[str] = None  # legacy ticker when position is kept from a mapped holding
+
+
+@dataclass
 class TransitionResult:
     """Complete transition calculation result."""
     sell_orders: List[SellOrder]
     buy_orders: List[BuyOrder]
     cash_residual: Decimal
     total_realized_gain_loss: Decimal
+    pre_holdings: List[PreHolding]
+    post_holdings: List[PostHolding]
 
 
 def round_to_precision(value: Decimal) -> Decimal:
-    """Round to 0.1% precision (0.001)."""
+    """Round to 0.1% precision (0.001). Accepts Decimal, int, or float (e.g. sum() of empty iterable returns int 0)."""
+    if not isinstance(value, Decimal):
+        value = Decimal(str(value))
     return value.quantize(PRECISION, rounding=ROUND_HALF_UP)
 
 
@@ -331,39 +352,37 @@ def liquidate_waterfall(
 
 def calculate_buys(
     underweight_classes: Dict[AssetClass, Decimal],
+    remaining_value: Decimal,
     total_value: Decimal,
     targets: Dict[AssetClass, Decimal],
     model_tickers: Dict[AssetClass, str]  # {asset_class: model_ticker}
 ) -> List[BuyOrder]:
     """
-    Calculate buy orders to bring underweight classes to Target % (midpoint).
-    
+    Calculate buy orders to bring underweight classes to Target % of full portfolio.
+    Current positions are % of remaining_value (kept positions); targets are % of total_value.
+
     Args:
-        underweight_classes: Dictionary of underweight classes and their current percentages
-        total_value: Total portfolio value
+        underweight_classes: Underweight classes and their current % (of remaining_value)
+        remaining_value: Value of kept positions after sells
+        total_value: Full portfolio value (used for target dollar amounts)
         targets: Target allocation percentages
         model_tickers: Dictionary mapping asset classes to model tickers
-        
+
     Returns:
         List of buy orders
     """
     buy_orders = []
-    
     for asset_class, current_pct in underweight_classes.items():
         target_pct = targets.get(asset_class, Decimal('0'))
-        
-        # Calculate value needed to reach target
-        current_value = (current_pct / Decimal('100')) * total_value
+        current_value = (current_pct / Decimal('100')) * remaining_value
         target_value = (target_pct / Decimal('100')) * total_value
         buy_value = target_value - current_value
-        
         if buy_value > Decimal('0') and asset_class in model_tickers:
             buy_orders.append(BuyOrder(
                 model_ticker=model_tickers[asset_class],
                 value=round_to_precision(buy_value),
                 asset_class=asset_class
             ))
-    
     return buy_orders
 
 
@@ -404,7 +423,8 @@ def rebalance(
     total_value = Decimal(str(prospect_data['total_value']))
     product_equivalents = prospect_data.get('product_equivalents', {})
     manual_mappings = prospect_data.get('manual_mappings', {})
-    
+    forced_sale_holdings = prospect_data.get('forced_sale_holdings', [])
+
     # Build strategy data structures
     strategy_positions = {}
     targets = {}
@@ -442,8 +462,15 @@ def rebalance(
     # Step 4: Calculate drift deltas (overweight classes)
     drift_deltas = calculate_drift_deltas(current_allocations, targets, drifts)
     
-    # Step 5: Liquidate overweight classes
+    # Step 5: Liquidate overweight classes (and forced-sale holdings first)
     all_sell_orders = []
+    for h in forced_sale_holdings:
+        all_sell_orders.append(SellOrder(
+            ticker=h.ticker,
+            value=h.value,
+            gain_loss=h.unrealized_gain_loss,
+            grade=2  # default for forced sale
+        ))
     for asset_class, delta_pct in drift_deltas.items():
         # Convert percentage delta to dollar value
         required_sell_value = (delta_pct / Decimal('100')) * total_value
@@ -493,17 +520,57 @@ def rebalance(
         if current_pct < target_pct:
             underweight[asset_class] = current_pct
     
-    # Calculate buys
-    buy_orders = calculate_buys(underweight, remaining_value, targets, model_tickers)
-    
-    # Step 8: Calculate cash residual
+    # Calculate buys (targets as % of full portfolio; current as % of kept positions)
+    buy_orders = calculate_buys(underweight, remaining_value, total_value, targets, model_tickers)
     total_bought = sum(order.value for order in buy_orders)
-    cash_residual = remaining_value - total_bought
+    # Cash available = proceeds from sells; we can only spend up to that
+    if total_bought > total_sold:
+        # Scale down buy orders so we don't overspend
+        scale = total_sold / total_bought if total_bought > 0 else Decimal('0')
+        scaled = []
+        for bo in buy_orders:
+            scaled.append(BuyOrder(
+                model_ticker=bo.model_ticker,
+                value=round_to_precision(bo.value * scale),
+                asset_class=bo.asset_class
+            ))
+        buy_orders = scaled
+        total_bought = sum(order.value for order in buy_orders)
+    # Cash residual = proceeds from sells minus what we spent on buys
+    cash_residual = max(Decimal('0'), total_sold - total_bought)
     cash_residual = sweep_residuals(cash_residual)
-    
+
+    # Build pre_holdings: mapped + forced sale + side pocket + unmapped (so pre total = full portfolio)
+    pre_holdings: List[PreHolding] = []
+    for h in mapped_holdings:
+        pre_holdings.append(PreHolding(ticker=h.ticker, asset_class=h.asset_class.value, value=h.value))
+    for h in forced_sale_holdings:
+        pre_holdings.append(PreHolding(ticker=h.ticker, asset_class="Forced Sale", value=h.value))
+    for h in side_pocket:
+        pre_holdings.append(PreHolding(ticker=h.ticker, asset_class="Side Pocket", value=h.value))
+    for h in unmapped_holdings:
+        pre_holdings.append(PreHolding(ticker=h.ticker, asset_class="Unmapped", value=h.value))
+
+    pre_total = sum(ph.value for ph in pre_holdings)
+
+    # Build post_holdings: remaining (kept; include legacy ticker) + buy_orders + cash
+    post_holdings: List[PostHolding] = []
+    for h in remaining_holdings:
+        post_holdings.append(PostHolding(model_ticker=h.model_ticker, asset_class=h.asset_class.value, value=h.value, ticker=h.ticker))
+    for bo in buy_orders:
+        post_holdings.append(PostHolding(model_ticker=bo.model_ticker, asset_class=bo.asset_class.value, value=bo.value))
+    # Normalize cash so post total equals pre total (avoids rounding drift)
+    post_sum_without_cash = sum(poh.value for poh in post_holdings)
+    cash_value = max(Decimal('0'), pre_total - post_sum_without_cash)
+    if cash_value > 0:
+        post_holdings.append(PostHolding(model_ticker="Cash", asset_class="Cash", value=cash_value))
+    cash_residual = cash_value  # keep API/DB in sync with post_holdings total
+
     return TransitionResult(
         sell_orders=all_sell_orders,
         buy_orders=buy_orders,
         cash_residual=cash_residual,
-        total_realized_gain_loss=round_to_precision(total_realized_gain_loss)
+        total_realized_gain_loss=round_to_precision(total_realized_gain_loss),
+        pre_holdings=pre_holdings,
+        post_holdings=post_holdings
     )

@@ -8,6 +8,12 @@ import os
 router = APIRouter()
 
 
+@router.get("")
+async def auth_router_ok():
+    """Confirm auth router is mounted (GET /api/auth returns 200)."""
+    return {"ok": True, "message": "auth router loaded"}
+
+
 class PasscodeRequest(BaseModel):
     passcode: str
 

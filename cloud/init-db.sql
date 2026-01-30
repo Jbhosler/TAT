@@ -22,7 +22,8 @@ CREATE TYPE asset_class_enum AS ENUM (
 CREATE TYPE mapping_status_enum AS ENUM (
     'mapped',
     'unmapped',
-    'multi_asset'
+    'multi_asset',
+    'forced_sale'
 );
 
 -- Create tables
@@ -60,6 +61,8 @@ CREATE TABLE IF NOT EXISTS prospects (
     strategy_id UUID NOT NULL REFERENCES strategies(id),
     name VARCHAR(255) NOT NULL,
     total_value NUMERIC(15, 2) NOT NULL,
+    document_pdf BYTEA,
+    document_filename VARCHAR(255),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -83,7 +86,8 @@ CREATE TABLE IF NOT EXISTS ticker_mappings (
     model_ticker VARCHAR(50) NOT NULL,
     grade INTEGER NOT NULL CHECK (grade IN (0, 1, 2)),
     dollar_split JSONB,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS transition_results (
@@ -94,7 +98,10 @@ CREATE TABLE IF NOT EXISTS transition_results (
     buy_orders JSONB NOT NULL,
     cash_residual NUMERIC(15, 2) NOT NULL,
     total_realized_gain_loss NUMERIC(15, 2) NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    pre_holdings JSONB,
+    post_holdings JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create indexes
@@ -128,6 +135,12 @@ CREATE TRIGGER update_prospects_updated_at BEFORE UPDATE ON prospects
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_prospect_holdings_updated_at BEFORE UPDATE ON prospect_holdings
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_ticker_mappings_updated_at BEFORE UPDATE ON ticker_mappings
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_transition_results_updated_at BEFORE UPDATE ON transition_results
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Grant app user access (run as postgres/superuser; replace tat_user if different)

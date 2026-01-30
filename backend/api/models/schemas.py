@@ -1,7 +1,8 @@
 """
 Pydantic schemas for API request/response validation.
 """
-from pydantic import BaseModel, Field, validator, ConfigDict
+import json
+from pydantic import BaseModel, Field, validator, field_validator, ConfigDict
 from typing import List, Optional, Dict, Any
 from decimal import Decimal
 from datetime import datetime
@@ -123,6 +124,25 @@ class ProspectResponse(BaseModel):
         from_attributes = True
 
 
+class ProspectListItem(BaseModel):
+    """Summary of a prospect for the scenarios list."""
+    id: UUID
+    name: str
+    strategy_id: UUID
+    strategy_name: Optional[str] = None
+    total_value: Decimal
+    created_at: datetime
+    has_result: bool = False
+    has_document: bool = False
+
+
+class ProspectSummary(BaseModel):
+    """Minimal prospect info (e.g. for result page)."""
+    id: UUID
+    name: str
+    has_document: bool = False
+
+
 # Ticker Mapping Schemas (Option C)
 class TickerMappingCreate(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
@@ -143,6 +163,11 @@ class TickerMappingResponse(BaseModel):
     created_at: datetime
 
 
+class ForceSaleRequest(BaseModel):
+    """Mark a holding as forced sale (don't map; liquidate)."""
+    legacy_ticker: str = Field(..., max_length=50)
+
+
 # Transition Result Schemas
 class SellOrder(BaseModel):
     ticker: str
@@ -159,7 +184,25 @@ class BuyOrder(BaseModel):
     asset_class: AssetClass
 
 
+class PreHolding(BaseModel):
+    """Legacy holding for pre-trade display (ticker, asset class, value)."""
+    model_config = ConfigDict(protected_namespaces=())
+    ticker: str
+    asset_class: str
+    value: Decimal
+
+
+class PostHolding(BaseModel):
+    """Proposed holding for post-trade display (model ticker, asset class, value; optional legacy ticker)."""
+    model_config = ConfigDict(protected_namespaces=())
+    model_ticker: str
+    asset_class: str
+    value: Decimal
+    ticker: Optional[str] = None  # legacy ticker when position is kept from a mapped holding
+
+
 class TransitionResultResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
     id: UUID
     prospect_id: UUID
     strategy_version: int
@@ -167,10 +210,17 @@ class TransitionResultResponse(BaseModel):
     buy_orders: List[BuyOrder]
     cash_residual: Decimal
     total_realized_gain_loss: Decimal
+    pre_holdings: Optional[List[PreHolding]] = None
+    post_holdings: Optional[List[PostHolding]] = None
     created_at: datetime
-    
-    class Config:
-        from_attributes = True
+
+    @field_validator("sell_orders", "buy_orders", "pre_holdings", "post_holdings", mode="before")
+    @classmethod
+    def parse_jsonb_list(cls, v: Any) -> Any:
+        """Parse JSONB columns that come back as JSON strings from the DB (e.g. pg8000)."""
+        if isinstance(v, str):
+            return json.loads(v)
+        return v
 
 
 # CSV Upload Schemas

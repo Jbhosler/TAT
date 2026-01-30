@@ -67,11 +67,29 @@ const MappingWizard = ({
       if (currentIndex < unmappedHoldings.length - 1) {
         setCurrentIndex(currentIndex + 1);
       } else {
-        // All mappings complete
         onMappingComplete();
       }
     } catch (err: any) {
       alert(err.response?.data?.detail || 'Failed to save mapping');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleForcedSale = async () => {
+    if (!confirm(`Mark ${currentHolding.ticker} as forced sale? This holding will be liquidated (sold) and the proceeds used in the transition.`)) {
+      return;
+    }
+    setLoading(true);
+    try {
+      await prospectsAPI.markForcedSale(prospectId, currentHolding.ticker);
+      if (currentIndex < unmappedHoldings.length - 1) {
+        setCurrentIndex(currentIndex + 1);
+      } else {
+        onMappingComplete();
+      }
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Failed to mark as forced sale');
     } finally {
       setLoading(false);
     }
@@ -190,22 +208,35 @@ const MappingWizard = ({
           />
         )}
 
-        <div className="flex space-x-4">
-          {currentIndex > 0 && (
+        <div className="flex flex-col gap-3">
+          <div className="flex space-x-4">
+            {currentIndex > 0 && (
+              <button
+                onClick={() => setCurrentIndex(currentIndex - 1)}
+                className="flex-1 py-2 px-4 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Previous
+              </button>
+            )}
             <button
-              onClick={() => setCurrentIndex(currentIndex - 1)}
-              className="flex-1 py-2 px-4 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+              onClick={handleSaveMapping}
+              disabled={loading || !currentMapping.model_ticker}
+              className="flex-1 py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
             >
-              Previous
+              {loading ? 'Saving...' : currentIndex < unmappedHoldings.length - 1 ? 'Next' : 'Complete'}
             </button>
-          )}
+          </div>
           <button
-            onClick={handleSaveMapping}
-            disabled={loading || !currentMapping.model_ticker}
-            className="flex-1 py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+            type="button"
+            onClick={handleForcedSale}
+            disabled={loading}
+            className="py-2 px-4 border border-amber-500 rounded-md text-sm font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 disabled:opacity-50"
           >
-            {loading ? 'Saving...' : currentIndex < unmappedHoldings.length - 1 ? 'Next' : 'Complete'}
+            Don&apos;t map (forced sale)
           </button>
+          <p className="text-xs text-gray-500">
+            Use &quot;Don&apos;t map (forced sale)&quot; to liquidate this holding; proceeds will be used in the transition.
+          </p>
         </div>
       </div>
     </div>
