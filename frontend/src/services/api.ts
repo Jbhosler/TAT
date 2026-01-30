@@ -90,6 +90,8 @@ export const prospectsAPI = {
   calculate: (id: string) => api.post(`/api/prospects/${id}/calculate`),
   getResult: (id: string) => api.get(`/api/prospects/${id}/result`),
   staleCheck: (id: string) => api.get(`/api/prospects/${id}/stale-check`),
+  getReportPdf: (id: string) =>
+    api.get(`/api/prospects/${id}/report-pdf`, { responseType: 'blob' }),
 };
 
 // Admin API
@@ -101,6 +103,22 @@ export const adminAPI = {
     api.post(`/api/admin/product-equivalents/${strategyId}`, csvContent, {
       headers: { 'Content-Type': 'text/csv' },
     }),
+  getSanityCheck: () => api.get('/api/admin/sanity-check'),
+  sanityCheckPreflight: (strategyId: string, csvContent: string) =>
+    api.post('/api/admin/sanity-check/preflight', { strategy_id: strategyId, csv_content: csvContent }),
+  replaceModelTicker: (body: {
+    old_model_ticker: string;
+    new_model_ticker: string;
+    add_old_as_grade1: boolean;
+    apply_to_all_strategies: boolean;
+    strategy_id?: string;
+  }) => api.post('/api/admin/replace-model-ticker', body),
+  resolveConflict: (body: {
+    legacy_ticker: string;
+    master_model_ticker: string;
+    master_grade: number;
+    strategy_ids?: string[];
+  }) => api.post('/api/admin/resolve-conflict', body),
 };
 
 export default api;

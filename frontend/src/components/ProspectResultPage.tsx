@@ -54,6 +54,26 @@ const ProspectResultPage = () => {
     }
   };
 
+  const handleDownloadReportPdf = async () => {
+    if (!id) return;
+    try {
+      const res = await prospectsAPI.getReportPdf(id);
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const disp = res.headers['content-disposition'] || res.headers['Content-Disposition'] || '';
+      const match = disp.match(/filename="?([^";\n]+)"?/);
+      a.download = match ? match[1].trim() : 'transition-report.pdf';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Could not download PDF report.');
+    }
+  };
+
   const formatDollars = (v: number) =>
     Number(v).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
@@ -134,18 +154,27 @@ const ProspectResultPage = () => {
           </div>
         ) : result ? (
           <div className="space-y-6">
-            <div className="bg-white shadow rounded-lg p-6">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">Transition Result</h2>
+            <div className="bg-white shadow rounded-lg p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div>
-                <p className="text-sm font-medium text-gray-700">Total Realized Gain/Loss</p>
-                <p
-                  className={`text-lg font-bold ${
-                    Number(result.total_realized_gain_loss) >= 0 ? 'text-red-600' : 'text-green-600'
-                  }`}
-                >
-                  ${formatDollars(Number(result.total_realized_gain_loss))}
-                </p>
+                <h2 className="text-lg font-semibold text-gray-900 mb-4">Transition Result</h2>
+                <div>
+                  <p className="text-sm font-medium text-gray-700">Total Realized Gain/Loss</p>
+                  <p
+                    className={`text-lg font-bold ${
+                      Number(result.total_realized_gain_loss) >= 0 ? 'text-red-600' : 'text-green-600'
+                    }`}
+                  >
+                    ${formatDollars(Number(result.total_realized_gain_loss))}
+                  </p>
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={handleDownloadReportPdf}
+                className="flex-shrink-0 inline-flex items-center justify-center px-4 py-2.5 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+              >
+                Download PDF Report
+              </button>
             </div>
             <TaxSummary prospectId={id} />
           </div>

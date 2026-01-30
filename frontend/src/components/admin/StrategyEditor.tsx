@@ -158,6 +158,26 @@ const StrategyEditor = () => {
     }
   };
 
+  const handleDelete = async () => {
+    if (!selectedStrategy) return;
+    if (!window.confirm(`Delete strategy "${selectedStrategy.name}"? This will remove all positions and product equivalents. This cannot be undone.`)) {
+      return;
+    }
+    setLoading(true);
+    try {
+      await strategiesAPI.delete(selectedStrategy.id);
+      alert('Strategy deleted successfully');
+      loadStrategies();
+      setSelectedStrategy(null);
+      setStrategyName('');
+      setPositions([]);
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Failed to delete strategy');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const assetClasses = [
     'US Large Core',
     'US Large Growth',
@@ -311,14 +331,26 @@ const StrategyEditor = () => {
         </div>
       </div>
 
-      {/* Save Button */}
-      <button
-        onClick={handleSave}
-        disabled={loading || !canSave()}
-        className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {loading ? 'Saving...' : selectedStrategy ? 'Update Strategy' : 'Create Strategy'}
-      </button>
+      {/* Save and Delete */}
+      <div className="flex gap-3">
+        <button
+          onClick={handleSave}
+          disabled={loading || !canSave()}
+          className="flex-1 flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {loading ? 'Saving...' : selectedStrategy ? 'Update Strategy' : 'Create Strategy'}
+        </button>
+        {selectedStrategy && (
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={loading}
+            className="px-4 py-2 border border-red-300 rounded-md shadow-sm text-sm font-medium text-red-700 bg-white hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50"
+          >
+            Delete Strategy
+          </button>
+        )}
+      </div>
       {!canSave() && positions.length > 0 && (
         <p className="mt-2 text-xs text-gray-500 text-center">
           Complete all fields and ensure target total is 100% to save.

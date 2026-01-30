@@ -59,6 +59,29 @@ const ProductEquivalents = () => {
       return;
     }
 
+    // Pre-flight: run sanity check with proposed CSV and warn of potential new conflicts
+    try {
+      const preflight = await adminAPI.sanityCheckPreflight(selectedStrategy, csvContent);
+      const data = preflight.data as {
+        multi_mapping_conflicts?: unknown[];
+        grade_inconsistencies?: unknown[];
+        orphaned_model_tickers?: unknown[];
+      };
+      const conflicts =
+        (data?.multi_mapping_conflicts?.length ?? 0) +
+        (data?.grade_inconsistencies?.length ?? 0) +
+        (data?.orphaned_model_tickers?.length ?? 0);
+      if (conflicts > 0) {
+        const proceed = window.confirm(
+          `Sanity check found ${conflicts} potential conflict(s) after this upload. ` +
+            'Review the Data Integrity tab to resolve. Do you want to proceed with the upload anyway?'
+        );
+        if (!proceed) return;
+      }
+    } catch (_) {
+      // Preflight failed (e.g. invalid CSV); continue to upload which will surface the error
+    }
+
     try {
       await adminAPI.uploadProductEquivalents(selectedStrategy, csvContent);
       alert('Product equivalents uploaded successfully');
@@ -144,6 +167,9 @@ const ProductEquivalents = () => {
                       Grade
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      Updated At
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                       Actions
                     </th>
                   </tr>
@@ -159,6 +185,11 @@ const ProductEquivalents = () => {
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                         {equiv.grade}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                        {equiv.updated_at
+                          ? new Date(equiv.updated_at).toLocaleString()
+                          : '—'}
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-sm">
                         <button

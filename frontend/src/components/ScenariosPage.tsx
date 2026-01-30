@@ -58,6 +58,25 @@ const ScenariosPage = () => {
     }
   };
 
+  const handleDownloadReportPdf = async (id: string) => {
+    try {
+      const res = await prospectsAPI.getReportPdf(id);
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const disp = res.headers['content-disposition'] || res.headers['Content-Disposition'] || '';
+      const match = disp.match(/filename="?([^";\n]+)"?/);
+      a.download = match ? match[1].trim() : 'transition-report.pdf';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Could not download PDF report.');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <nav className="bg-white shadow-sm">
@@ -175,12 +194,22 @@ const ScenariosPage = () => {
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-right">
                       {s.has_result ? (
-                        <Link
-                          to={`/prospect/${s.id}`}
-                          className="text-indigo-600 hover:text-indigo-800 font-medium"
-                        >
-                          View results
-                        </Link>
+                        <span className="inline-flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadReportPdf(s.id)}
+                            className="text-indigo-600 hover:text-indigo-800 font-medium"
+                          >
+                            Download PDF Report
+                          </button>
+                          <span className="text-gray-300">|</span>
+                          <Link
+                            to={`/prospect/${s.id}`}
+                            className="text-indigo-600 hover:text-indigo-800 font-medium"
+                          >
+                            View results
+                          </Link>
+                        </span>
                       ) : (
                         <Link
                           to="/dashboard"

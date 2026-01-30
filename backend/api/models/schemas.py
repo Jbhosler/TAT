@@ -86,6 +86,65 @@ class ProductEquivalentResponse(BaseModel):
     updated_at: datetime
 
 
+# Sanity Check (Data Integrity) Schemas
+class StrategyRef(BaseModel):
+    """Strategy reference for conflict reporting."""
+    id: UUID
+    name: str
+
+
+class MultiMappingConflict(BaseModel):
+    """Alternate (legacy) ticker mapped to more than one model ticker across strategies."""
+    legacy_ticker: str
+    model_tickers: List[str]
+    strategies: List[StrategyRef]
+    mappings: List[Dict[str, Any]]  # [{strategy_id, strategy_name, model_ticker, grade}, ...]
+
+
+class GradeInconsistencyConflict(BaseModel):
+    """Same legacy ticker has different grades in different strategies."""
+    legacy_ticker: str
+    strategies: List[StrategyRef]
+    grades_by_strategy: List[Dict[str, Any]]  # [{strategy_id, strategy_name, model_ticker, grade}, ...]
+
+
+class OrphanedModelTicker(BaseModel):
+    """Model ticker in strategy_positions with no Grade 0 entry in product_equivalents."""
+    strategy_id: UUID
+    strategy_name: str
+    model_ticker: str
+
+
+class SanityCheckResponse(BaseModel):
+    """Response from GET /api/admin/sanity-check."""
+    multi_mapping_conflicts: List[MultiMappingConflict] = []
+    grade_inconsistencies: List[GradeInconsistencyConflict] = []
+    orphaned_model_tickers: List[OrphanedModelTicker] = []
+
+
+class ReplaceModelTickerRequest(BaseModel):
+    """Request to replace a model ticker (e.g. SPYM -> VOO)."""
+    old_model_ticker: str
+    new_model_ticker: str
+    add_old_as_grade1: bool = True
+    apply_to_all_strategies: bool = False
+    strategy_id: Optional[UUID] = None  # If not apply_to_all, required
+
+
+class ResolveConflictRequest(BaseModel):
+    """Request to resolve a conflict by applying a master mapping."""
+    legacy_ticker: str
+    master_model_ticker: str
+    master_grade: int = Field(..., ge=0, le=2)
+    strategy_ids: Optional[List[UUID]] = None  # If None, apply to all strategies that have this legacy_ticker
+
+
+class SanityCheckPreflightRequest(BaseModel):
+    """Pre-flight sanity check with proposed product equivalents CSV for one strategy."""
+    strategy_id: UUID
+    csv_content: str
+
+
 # Prospect Schemas
 class ProspectHoldingCreate(BaseModel):
     ticker: str = Field(..., max_length=50)

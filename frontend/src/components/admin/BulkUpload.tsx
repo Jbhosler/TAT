@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { strategiesAPI } from '../../services/api';
+import { strategiesAPI, adminAPI } from '../../services/api';
 
 const BulkUpload = () => {
   const [selectedStrategy, setSelectedStrategy] = useState('');
@@ -46,6 +46,29 @@ const BulkUpload = () => {
     if (!csvContent) {
       alert('Please upload a CSV file');
       return;
+    }
+
+    // Pre-flight: run sanity check and warn of potential conflicts before committing
+    try {
+      const sanityRes = await adminAPI.getSanityCheck();
+      const data = sanityRes.data as {
+        multi_mapping_conflicts?: unknown[];
+        grade_inconsistencies?: unknown[];
+        orphaned_model_tickers?: unknown[];
+      };
+      const total =
+        (data?.multi_mapping_conflicts?.length ?? 0) +
+        (data?.grade_inconsistencies?.length ?? 0) +
+        (data?.orphaned_model_tickers?.length ?? 0);
+      if (total > 0) {
+        const proceed = window.confirm(
+          `Data Integrity check found ${total} existing conflict(s). ` +
+            'Uploading may introduce new orphaned model tickers if product equivalents are missing. Proceed anyway?'
+        );
+        if (!proceed) return;
+      }
+    } catch (_) {
+      // Sanity check failed; allow upload to continue
     }
 
     setLoading(true);

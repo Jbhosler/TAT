@@ -93,6 +93,26 @@ const Dashboard = () => {
     }
   };
 
+  const handleDownloadReportPdf = async () => {
+    if (!prospectId) return;
+    try {
+      const res = await prospectsAPI.getReportPdf(prospectId);
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const disp = res.headers['content-disposition'] || res.headers['Content-Disposition'] || '';
+      const match = disp.match(/filename="?([^";\n]+)"?/);
+      a.download = match ? match[1].trim() : 'transition-report.pdf';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Could not download PDF report.');
+    }
+  };
+
   const handleStartNewProspect = () => {
     setProspectId(null);
     setStep('upload');
@@ -373,6 +393,12 @@ const Dashboard = () => {
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-3">
+                    <button
+                      onClick={handleDownloadReportPdf}
+                      className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    >
+                      Download PDF Report
+                    </button>
                     <button
                       onClick={handleCalculate}
                       className="text-sm text-indigo-600 hover:text-indigo-800"

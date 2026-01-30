@@ -25,6 +25,7 @@ from backend.api.models.schemas import (
 )
 from backend.utils.csv_parser import parse_prospect_csv
 from backend.utils.asset_classifier import classify_holdings_as_side_pocket
+from backend.utils.pdf_generator import build_transition_report_pdf
 from backend.logic.rebalancer import (
     Holding, MappedHolding, rebalance, classify_holdings
 )
@@ -460,6 +461,76 @@ async def get_transition_result(
         raise HTTPException(status_code=404, detail="Transition result not found")
 
     return TransitionResultResponse.model_validate(result)
+
+
+def _normalize_jsonb(v):
+    """Ensure JSONB field is a list of dicts."""
+    if v is None:
+        return []
+    if isinstance(v, str):
+        return json.loads(v) if v.strip() else []
+    if isinstance(v, list):
+        return [x if isinstance(x, dict) else dict(x) for x in v]
+    return []
+
+
+@router.get("/{prospect_id}/report-pdf")
+async def get_report_pdf(
+    prospect_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """Generate landscape PDF transition report for the prospect's latest result."""
+    prospect = db.query(Prospect).filter(Prospect.id == prospect_id).first()
+    if not prospect:
+        raise HTTPException(status_code=404, detail="Prospect not found")
+    strategy = db.query(Strategy).filter(Strategy.id == prospect.strategy_id).first()
+    if not strategy:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    result = db.query(TransitionResult).filter(
+        TransitionResult.prospect_id == prospect_id
+    ).order_by(TransitionResult.created_at.desc()).first()
+    if not result:
+        raise HTTPException(status_code=404, detail="Transition result not found. Run Calculate first.")
+
+    sell_orders = _normalize_jsonb(result.sell_orders)
+    buy_orders = _normalize_jsonb(result.buy_orders)
+    pre_holdings = _normalize_jsonb(result.pre_holdings)
+    post_holdings = _normalize_jsonb(result.post_holdings)
+
+    total_value = float(prospect.total_value)
+    total_gains = sum(max(0, float(so.get("gain_loss", 0))) for so in sell_orders)
+    total_losses = sum(min(0, float(so.get("gain_loss", 0))) for so in sell_orders)
+    net_gain_loss = float(result.total_realized_gain_loss)
+    cash_residual = float(result.cash_residual)
+
+    total_post_value = sum(float(h.get("value", 0)) for h in post_holdings) or 1.0
+    model_value = sum(
+        float(h.get("value", 0)) for h in post_holdings
+        if not h.get("ticker")
+    )
+    model_purity_pct = (model_value / total_post_value * 100) if total_post_value else 0.0
+
+    pdf_bytes = build_transition_report_pdf(
+        prospect_name=prospect.name,
+        strategy_name=strategy.name,
+        report_date=result.created_at.date() if result.created_at else None,
+        total_value=total_value,
+        total_gains=total_gains,
+        total_losses=abs(total_losses),
+        net_gain_loss=net_gain_loss,
+        model_purity_pct=model_purity_pct,
+        cash_residual=cash_residual,
+        pre_holdings=pre_holdings,
+        post_holdings=post_holdings,
+        sell_orders=sell_orders,
+        buy_orders=buy_orders,
+    )
+    filename = f"transition-report-{prospect.name.replace(' ', '-')[:30]}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/{prospect_id}/stale-check")
