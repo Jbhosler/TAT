@@ -5,6 +5,7 @@ import Dashboard from './components/Dashboard';
 import AdminPanel from './components/admin/AdminPanel';
 import ScenariosPage from './components/ScenariosPage';
 import ProspectResultPage from './components/ProspectResultPage';
+import MonitoringPage from './components/MonitoringPage';
 
 function App() {
   // Use state to track auth so React re-renders when it changes
@@ -71,6 +72,18 @@ function App() {
           path="/prospect/:id"
           element={
             isAuthenticated() ? <ProspectResultPage /> : <Navigate to="/" replace />
+          }
+        />
+        <Route
+          path="/monitoring"
+          element={
+            isAuthenticated() ? <MonitoringPage /> : <Navigate to="/" replace />
+          }
+        />
+        <Route
+          path="/monitoring/account/:id"
+          element={
+            isAuthenticated() ? <MonitoringPage /> : <Navigate to="/" replace />
           }
         />
       </Routes>

@@ -3,12 +3,24 @@ Database connection module with Cloud SQL support.
 Handles both local development (Cloud SQL Proxy) and production (Cloud SQL Connector).
 """
 import os
+import logging
 from typing import Optional
 from sqlalchemy import create_engine, Engine
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import NullPool
-import pg8000
-from google.cloud.sql.connector import Connector
+
+logger = logging.getLogger(__name__)
+
+# Optional imports so route modules can load even if DB deps fail (e.g. missing in image)
+try:
+    import pg8000  # noqa: F401
+    from google.cloud.sql.connector import Connector
+    _connector_available = True
+except ImportError as e:
+    logger.warning("Database connector imports failed: %s. DB routes will fail at first use.", e)
+    pg8000 = None
+    Connector = None
+    _connector_available = False
 
 
 # BOM (U+FEFF) can appear when secrets are created from UTF-8 files; strip it so auth works
@@ -19,8 +31,12 @@ def _clean_secret(value: Optional[str], default: str = "") -> str:
     return s if s else default
 
 
-def get_cloud_sql_connector() -> Connector:
+def get_cloud_sql_connector():
     """Initialize Cloud SQL Connector for production."""
+    if not _connector_available or Connector is None:
+        raise RuntimeError(
+            "Cloud SQL Connector not available. Install cloud-sql-python-connector[pg8000] and pg8000 in the container."
+        )
     return Connector()
 
 
@@ -55,6 +71,11 @@ def create_engine_with_connector() -> Engine:
     """
     Create SQLAlchemy engine with Cloud SQL Connector for production.
     """
+    if not _connector_available:
+        raise RuntimeError(
+            "Cloud SQL Connector not available. Install cloud-sql-python-connector[pg8000] and pg8000. "
+            "Check Cloud Run logs for the original ImportError."
+        )
     connection_name = get_connection_string()
     db_name = _clean_secret(os.getenv("DB_NAME"), "tat_database")
     db_user = _clean_secret(os.getenv("DB_USER"), "tat_user")
@@ -83,6 +104,8 @@ def create_engine_local() -> Engine:
     """
     Create SQLAlchemy engine for local development (Cloud SQL Proxy or local PostgreSQL).
     """
+    if pg8000 is None:
+        raise RuntimeError("pg8000 not available. Install pg8000 in the container.")
     connection_string = get_connection_string()
     engine = create_engine(
         connection_string,

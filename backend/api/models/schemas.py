@@ -5,7 +5,7 @@ import json
 from pydantic import BaseModel, Field, validator, field_validator, ConfigDict
 from typing import List, Optional, Dict, Any
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, date
 from uuid import UUID
 from backend.api.models.database import AssetClass, MappingStatus
 
@@ -306,3 +306,127 @@ class ProductEquivalentCSVRow(BaseModel):
     legacy_ticker: str
     model_ticker: str
     grade: int = Field(..., ge=0, le=2)
+
+
+# Monitoring module schemas
+class StrategyNameMappingCreate(BaseModel):
+    """Create/update strategy name mapping (external vendor name -> internal strategy)."""
+    model_config = ConfigDict(protected_namespaces=())
+    external_model_name: str = Field(..., max_length=255)
+    internal_strategy_id: UUID
+
+
+class StrategyNameMappingResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
+    id: UUID
+    external_model_name: str
+    internal_strategy_id: UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+class MonitoredAccountResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
+    id: UUID
+    synthetic_id: str
+    friendly_name: Optional[str] = None
+    internal_strategy_id: UUID
+    firm: Optional[str] = None
+    advisor: Optional[str] = None
+    account_display: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class MonitoredAccountUpdate(BaseModel):
+    """Update friendly_name for a monitored account."""
+    friendly_name: Optional[str] = Field(None, max_length=255)
+
+
+class AccountSnapshotHoldingResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
+    id: UUID
+    account_snapshot_id: UUID
+    ticker: str
+    asset_class: Optional[str] = None
+    value: Decimal
+    weight_pct: Optional[Decimal] = None
+    grade: Optional[int] = None
+
+
+class AccountSnapshotResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
+    id: UUID
+    monitored_account_id: UUID
+    as_of_date: date
+    total_value: Decimal
+    total_deviation_score: Decimal
+    purity_score: Decimal
+    created_at: datetime
+    holdings: List[AccountSnapshotHoldingResponse] = []
+
+
+class AssetClassAllocation(BaseModel):
+    """Actual vs target allocation for one asset class (drill-down)."""
+    asset_class: str
+    actual_pct: Decimal
+    target_pct: Decimal
+    drift_pct: Decimal
+    value: Optional[Decimal] = None
+
+
+class SnapshotWithBreakdown(BaseModel):
+    """Snapshot plus actual vs target allocation breakdown for drill-down."""
+    snapshot: AccountSnapshotResponse
+    allocations: List[AssetClassAllocation] = []
+
+
+class IngestResponse(BaseModel):
+    """Response from POST /api/monitoring/ingest."""
+    ingested_count: int = 0
+    skipped_count: int = 0
+    data_inconsistency_synthetic_ids: List[str] = []
+    as_of_date: Optional[date] = None
+
+
+class MonitoredAccountListItem(BaseModel):
+    """List item for heat map (monitored account with latest snapshot)."""
+    id: UUID
+    synthetic_id: str
+    friendly_name: Optional[str] = None
+    strategy_name: Optional[str] = None
+    internal_strategy_id: UUID
+    firm: Optional[str] = None
+    advisor: Optional[str] = None
+    account_display: Optional[str] = None
+    total_value: Optional[Decimal] = None
+    total_deviation_score: Optional[Decimal] = None
+    purity_score: Optional[Decimal] = None
+    cash_pct: Optional[Decimal] = None
+    as_of_date: Optional[date] = None
+
+
+class ConcentrationReportItem(BaseModel):
+    """Grade 1/2 ticker with total dollar exposure across all advisors."""
+    ticker: str
+    grade: int
+    total_value: Decimal
+    account_count: int
+    asset_class: Optional[str] = None
+
+
+class TopOffenderItem(BaseModel):
+    """Account ranked by dollar volume of Grade 2 assets (lowest hanging fruit)."""
+    account_id: UUID
+    friendly_name: Optional[str] = None
+    synthetic_id: str
+    strategy_name: Optional[str] = None
+    total_grade2_value: Decimal
+    as_of_date: Optional[date] = None
+
+
+class UnmappedTickerItem(BaseModel):
+    """Ticker in vendor data that is not in product equivalents library."""
+    ticker: str
+    total_value: Decimal
+    strategy_names: List[str] = []  # Strategies where this ticker appears but is unmapped

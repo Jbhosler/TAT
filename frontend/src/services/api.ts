@@ -121,4 +121,29 @@ export const adminAPI = {
   }) => api.post('/api/admin/resolve-conflict', body),
 };
 
+// Monitoring API
+export const monitoringAPI = {
+  listStrategyMappings: () => api.get('/api/monitoring/strategy-mappings'),
+  createStrategyMapping: (body: { external_model_name: string; internal_strategy_id: string }) =>
+    api.post('/api/monitoring/strategy-mappings', body),
+  updateStrategyMapping: (id: string, body: { external_model_name: string; internal_strategy_id: string }) =>
+    api.put(`/api/monitoring/strategy-mappings/${id}`, body),
+  deleteStrategyMapping: (id: string) => api.delete(`/api/monitoring/strategy-mappings/${id}`),
+  ingest: (csvContent: string) =>
+    api.post('/api/monitoring/ingest', csvContent, { headers: { 'Content-Type': 'text/csv' } }),
+  listAccounts: (params?: { as_of_date?: string }) =>
+    api.get('/api/monitoring/accounts', { params }),
+  getAccount: (id: string) => api.get(`/api/monitoring/accounts/${id}`),
+  updateAccount: (id: string, body: { friendly_name?: string }) =>
+    api.patch(`/api/monitoring/accounts/${id}`, body),
+  getAccountSnapshots: (id: string, params?: { as_of_date?: string }) =>
+    api.get(`/api/monitoring/accounts/${id}/snapshots`, { params }),
+  concentrationReport: (params?: { as_of_date?: string }) =>
+    api.get('/api/monitoring/concentration-report', { params }),
+  topOffenders: (params?: { as_of_date?: string }) =>
+    api.get('/api/monitoring/top-offenders', { params }),
+  unmappedTickers: (params?: { as_of_date?: string }) =>
+    api.get('/api/monitoring/unmapped-tickers', { params }),
+};
+
 export default api;

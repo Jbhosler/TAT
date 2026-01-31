@@ -1,7 +1,7 @@
 """
 SQLAlchemy database models for the Tax-Aware Transition Tool.
 """
-from sqlalchemy import Column, String, Integer, Numeric, Boolean, ForeignKey, DateTime, JSON, Enum as SQLEnum, LargeBinary
+from sqlalchemy import Column, String, Integer, Numeric, Boolean, ForeignKey, DateTime, Date, JSON, Enum as SQLEnum, LargeBinary, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -53,6 +53,8 @@ class Strategy(Base):
     positions = relationship("StrategyPosition", back_populates="strategy", cascade="all, delete-orphan")
     product_equivalents = relationship("ProductEquivalent", back_populates="strategy", cascade="all, delete-orphan")
     prospects = relationship("Prospect", back_populates="strategy")
+    strategy_name_mappings = relationship("StrategyNameMapping", back_populates="strategy", cascade="all, delete-orphan")
+    monitored_accounts = relationship("MonitoredAccount", back_populates="strategy", cascade="all, delete-orphan")
 
 
 class StrategyPosition(Base):
@@ -167,3 +169,58 @@ class TransitionResult(Base):
     
     # Relationships
     prospect = relationship("Prospect", back_populates="transition_results")
+
+
+class StrategyNameMapping(Base):
+    """Maps external vendor model names to internal strategy IDs (Strategy Bridge)."""
+    __tablename__ = "strategy_name_mappings"
+
+    external_model_name = Column(String(255), nullable=False, unique=True)
+    internal_strategy_id = Column(UUID(as_uuid=True), ForeignKey("strategies.id"), nullable=False)
+
+    strategy = relationship("Strategy", back_populates="strategy_name_mappings")
+
+
+class MonitoredAccount(Base):
+    """One row per synthetic account (Monitoring module)."""
+    __tablename__ = "monitored_accounts"
+
+    synthetic_id = Column(String(64), nullable=False, unique=True)
+    friendly_name = Column(String(255), nullable=True)
+    internal_strategy_id = Column(UUID(as_uuid=True), ForeignKey("strategies.id"), nullable=False)
+    firm = Column(String(255), nullable=True)
+    advisor = Column(String(255), nullable=True)
+    account_display = Column(String(255), nullable=True)  # Partial/masked account (e.g. ****5038)
+
+    strategy = relationship("Strategy", back_populates="monitored_accounts")
+    snapshots = relationship("AccountSnapshot", back_populates="monitored_account", cascade="all, delete-orphan")
+
+
+class AccountSnapshot(Base):
+    """One snapshot per (MonitoredAccount, as_of_date)."""
+    __tablename__ = "account_snapshots"
+    __table_args__ = (UniqueConstraint("monitored_account_id", "as_of_date", name="uq_account_snapshot_account_date"),)
+
+    monitored_account_id = Column(UUID(as_uuid=True), ForeignKey("monitored_accounts.id"), nullable=False)
+    as_of_date = Column(Date, nullable=False)
+    total_value = Column(Numeric(15, 2), nullable=False)
+    total_deviation_score = Column(Numeric(10, 3), nullable=False)
+    purity_score = Column(Numeric(5, 2), nullable=False)
+    cash_pct = Column(Numeric(5, 2), nullable=True)  # Cash as % of account value
+
+    monitored_account = relationship("MonitoredAccount", back_populates="snapshots")
+    holdings = relationship("AccountSnapshotHolding", back_populates="account_snapshot", cascade="all, delete-orphan")
+
+
+class AccountSnapshotHolding(Base):
+    """Individual holding within an account snapshot."""
+    __tablename__ = "account_snapshot_holdings"
+
+    account_snapshot_id = Column(UUID(as_uuid=True), ForeignKey("account_snapshots.id"), nullable=False)
+    ticker = Column(String(50), nullable=False)
+    asset_class = Column(String(100), nullable=True)
+    value = Column(Numeric(15, 2), nullable=False)
+    weight_pct = Column(Numeric(6, 3), nullable=True)
+    grade = Column(Integer, nullable=True)
+
+    account_snapshot = relationship("AccountSnapshot", back_populates="holdings")

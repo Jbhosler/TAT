@@ -29,6 +29,12 @@ const AdminPanel = () => {
                 Scenarios
               </Link>
               <Link
+                to="/monitoring"
+                className="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium"
+              >
+                Monitoring
+              </Link>
+              <Link
                 to="/dashboard"
                 className="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium"
               >

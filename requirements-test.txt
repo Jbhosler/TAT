@@ -1,3 +1,9 @@
-# Minimal deps to run rebalancer tests (no database driver).
+# Minimal deps to run unit tests (monitoring parser, monitor engine, rebalancer).
 # Use: pip install -r requirements-test.txt
+# Run tests: python -m pytest tests/test_monitoring_parser.py tests/test_monitor_engine.py -v
 pytest>=7.4.0
+sqlalchemy>=2.0
+pydantic>=2.0
+pydantic-settings>=2.0
+python-dateutil>=2.8
+python-dotenv>=1.0

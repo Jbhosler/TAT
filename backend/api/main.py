@@ -80,17 +80,28 @@ app.add_middleware(
     max_age=3600,
 )
 
-# Include routers (with error handling)
+# Load routers one by one so one failure doesn't block the rest; log each so logs show the failure
+logger.info("Loading API routers...")
 try:
-    from backend.api.routes import auth, strategies, prospects, admin
+    from backend.api.routes import auth
     app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
-    app.include_router(strategies.router, prefix="/api/strategies", tags=["strategies"])
-    app.include_router(prospects.router, prefix="/api/prospects", tags=["prospects"])
-    app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
-    logger.info("All routers loaded successfully")
+    logger.info("Auth router loaded")
 except Exception as e:
-    logger.error(f"Error loading routers: {e}", exc_info=True)
-    # App will still start, but some routes won't work
+    logger.error(f"Error loading auth router: {e}", exc_info=True)
+
+def _load_router(name: str, module_attr: str, prefix: str, tag: str):
+    try:
+        mod = __import__(f"backend.api.routes.{module_attr}", fromlist=[module_attr])
+        router = getattr(mod, "router")
+        app.include_router(router, prefix=prefix, tags=[tag])
+        logger.info("%s router loaded", name)
+    except Exception as e:
+        logger.error("Error loading %s router: %s", name, e, exc_info=True)
+
+_load_router("strategies", "strategies", "/api/strategies", "strategies")
+_load_router("prospects", "prospects", "/api/prospects", "prospects")
+_load_router("admin", "admin", "/api/admin", "admin")
+_load_router("monitoring", "monitoring", "/api/monitoring", "monitoring")
 
 
 @app.on_event("startup")
