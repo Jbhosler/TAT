@@ -131,6 +131,7 @@ export const monitoringAPI = {
   deleteStrategyMapping: (id: string) => api.delete(`/api/monitoring/strategy-mappings/${id}`),
   ingest: (csvContent: string) =>
     api.post('/api/monitoring/ingest', csvContent, { headers: { 'Content-Type': 'text/csv' } }),
+  lastIngest: () => api.get<{ last_ingest_at: string | null; as_of_date: string | null }>('/api/monitoring/last-ingest'),
   listAccounts: (params?: { as_of_date?: string }) =>
     api.get('/api/monitoring/accounts', { params }),
   getAccount: (id: string) => api.get(`/api/monitoring/accounts/${id}`),
@@ -140,6 +141,8 @@ export const monitoringAPI = {
     api.get(`/api/monitoring/accounts/${id}/snapshots`, { params }),
   concentrationReport: (params?: { as_of_date?: string }) =>
     api.get('/api/monitoring/concentration-report', { params }),
+  concentrationReportAccounts: (ticker: string, grade: number, params?: { as_of_date?: string }) =>
+    api.get(`/api/monitoring/concentration-report/${encodeURIComponent(ticker)}/accounts`, { params: { grade, ...params } }),
   topOffenders: (params?: { as_of_date?: string }) =>
     api.get('/api/monitoring/top-offenders', { params }),
   unmappedTickers: (params?: { as_of_date?: string }) =>

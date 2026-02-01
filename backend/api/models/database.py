@@ -224,3 +224,13 @@ class AccountSnapshotHolding(Base):
     grade = Column(Integer, nullable=True)
 
     account_snapshot = relationship("AccountSnapshot", back_populates="holdings")
+
+
+class MonitoringIngestRun(Base):
+    """One row per successful aggregated holdings ingest; used to skip duplicate files and expose last_ingest_at."""
+    __tablename__ = "monitoring_ingest_runs"
+
+    ingested_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    ingested_count = Column(Integer, nullable=False, default=0)
+    as_of_date = Column(Date, nullable=True)
+    file_checksum = Column(String(64), nullable=False)

@@ -4,10 +4,11 @@ import StrategyBridge from './monitoring/StrategyBridge';
 import HeatMap from './monitoring/HeatMap';
 import ConcentrationReport from './monitoring/ConcentrationReport';
 import AccountDrillDown from './monitoring/AccountDrillDown';
+import ConcentrationAccountList from './monitoring/ConcentrationAccountList';
 import { monitoringAPI } from '../services/api';
 
 const MonitoringPage = () => {
-  const { id: accountId } = useParams<{ id: string }>();
+  const { id: accountId, ticker, grade } = useParams<{ id?: string; ticker?: string; grade?: string }>();
   const [activeTab, setActiveTab] = useState<'bridge' | 'heatmap' | 'concentration'>('bridge');
   const [csvContent, setCsvContent] = useState('');
   const [ingesting, setIngesting] = useState(false);
@@ -15,6 +16,7 @@ const MonitoringPage = () => {
     ingested_count: number;
     skipped_count: number;
     data_inconsistency_synthetic_ids: string[];
+    last_ingest_at?: string | null;
   } | null>(null);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -68,6 +70,31 @@ const MonitoringPage = () => {
         </nav>
         <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
           <AccountDrillDown />
+        </main>
+      </div>
+    );
+  }
+
+  if (ticker && grade) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <nav className="bg-white shadow-sm">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex justify-between h-16">
+              <div className="flex items-center gap-4">
+                <h1 className="text-xl font-bold text-gray-900">Monitoring</h1>
+                <Link to="/monitoring" className="text-sm text-indigo-600 hover:text-indigo-800">← Back</Link>
+              </div>
+              <div className="flex items-center gap-4">
+                <Link to="/dashboard" className="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium">Dashboard</Link>
+                <Link to="/scenarios" className="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium">Scenarios</Link>
+                <Link to="/admin" className="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium">Admin</Link>
+              </div>
+            </div>
+          </div>
+        </nav>
+        <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+          <ConcentrationAccountList />
         </main>
       </div>
     );
@@ -162,7 +189,9 @@ const MonitoringPage = () => {
           </div>
 
           {activeTab === 'bridge' && <StrategyBridge />}
-          {activeTab === 'heatmap' && <HeatMap />}
+          {activeTab === 'heatmap' && (
+            <HeatMap refreshTrigger={ingestResult?.last_ingest_at ?? null} />
+          )}
           {activeTab === 'concentration' && <ConcentrationReport />}
         </div>
       </main>

@@ -120,7 +120,14 @@ const ConcentrationReport = () => {
                         <td className="px-4 py-2 text-sm text-center text-gray-700">{row.grade}</td>
                         <td className="px-4 py-2 text-sm text-gray-600">{row.asset_class ?? '—'}</td>
                         <td className="px-4 py-2 text-sm text-right text-gray-900">${formatDollars(row.total_value)}</td>
-                        <td className="px-4 py-2 text-sm text-right text-gray-600">{row.account_count}</td>
+                        <td className="px-4 py-2 text-sm text-right text-gray-600">
+                          <Link
+                            to={`/monitoring/concentration/accounts/${encodeURIComponent(row.ticker)}/${row.grade}${asOfDate ? `?as_of_date=${asOfDate}` : ''}`}
+                            className="text-indigo-600 hover:text-indigo-800 font-medium"
+                          >
+                            {row.account_count}
+                          </Link>
+                        </td>
                       </tr>
                     ))
                   )}

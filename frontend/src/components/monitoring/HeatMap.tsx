@@ -14,17 +14,37 @@ type Account = {
   as_of_date: string | null;
 };
 
-const HeatMap = () => {
+type HeatMapProps = {
+  /** When this changes (e.g. after a new file ingest), heat map data is refetched. */
+  refreshTrigger?: string | null;
+};
+
+const HeatMap = ({ refreshTrigger }: HeatMapProps) => {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
   const [sortBy, setSortBy] = useState<'deviation' | 'value' | 'purity'>('deviation');
   const [sortDesc, setSortDesc] = useState(true);
+  const [lastIngestAt, setLastIngestAt] = useState<string | null>(null);
 
   const loadAccounts = async () => {
     setLoading(true);
     try {
-      const res = await monitoringAPI.listAccounts();
-      setAccounts(res.data);
+      // Load accounts; lastIngest is optional (404 if backend not yet deployed with ingest-runs)
+      const [accountsRes, lastRes] = await Promise.allSettled([
+        monitoringAPI.listAccounts(),
+        monitoringAPI.lastIngest(),
+      ]);
+      if (accountsRes.status === 'fulfilled') {
+        setAccounts(accountsRes.value.data);
+      } else {
+        console.error('Failed to load monitored accounts:', accountsRes.reason);
+        setAccounts([]);
+      }
+      if (lastRes.status === 'fulfilled') {
+        setLastIngestAt(lastRes.value.data.last_ingest_at ?? null);
+      } else {
+        setLastIngestAt(null); // e.g. 404 when /api/monitoring/last-ingest not deployed yet
+      }
     } catch (err) {
       console.error('Failed to load monitored accounts:', err);
       setAccounts([]);
@@ -35,7 +55,7 @@ const HeatMap = () => {
 
   useEffect(() => {
     loadAccounts();
-  }, []);
+  }, [refreshTrigger ?? '']);
 
   const sorted = [...accounts].sort((a, b) => {
     let va: number, vb: number;
@@ -71,6 +91,11 @@ const HeatMap = () => {
       </div>
       <p className="text-sm text-gray-500 mb-4">
         Monitored accounts ranked by deviation. Click View to drill down.
+        {lastIngestAt && (
+          <span className="block mt-1 text-gray-400">
+            Data from last ingest: {new Date(lastIngestAt).toLocaleString('en-US')}
+          </span>
+        )}
       </p>
 
       {loading ? (

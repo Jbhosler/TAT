@@ -387,6 +387,13 @@ class IngestResponse(BaseModel):
     skipped_count: int = 0
     data_inconsistency_synthetic_ids: List[str] = []
     as_of_date: Optional[date] = None
+    last_ingest_at: Optional[datetime] = None  # When heat map data was last updated (only on new file ingest)
+
+
+class LastIngestResponse(BaseModel):
+    """Response from GET /api/monitoring/last-ingest."""
+    last_ingest_at: Optional[datetime] = None
+    as_of_date: Optional[date] = None
 
 
 class MonitoredAccountListItem(BaseModel):
@@ -413,6 +420,15 @@ class ConcentrationReportItem(BaseModel):
     total_value: Decimal
     account_count: int
     asset_class: Optional[str] = None
+
+
+class ConcentrationAccountItem(BaseModel):
+    """One account holding a given ticker+grade in the concentration report drill-down."""
+    account_id: UUID
+    adviser: Optional[str] = None
+    partial_account_number: Optional[str] = None
+    value: Decimal
+    pct_of_total: Decimal
 
 
 class TopOffenderItem(BaseModel):

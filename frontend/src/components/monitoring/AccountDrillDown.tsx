@@ -201,31 +201,92 @@ const AccountDrillDown = () => {
           </div>
 
           <div className="bg-white shadow rounded-lg p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Holdings</h3>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Ticker</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Asset Class</th>
-                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Value</th>
-                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Weight %</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Grade</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {(snap.snapshot.holdings || []).map((h, i) => (
-                    <tr key={i}>
-                      <td className="px-4 py-2 text-sm text-gray-900">{h.ticker}</td>
-                      <td className="px-4 py-2 text-sm text-gray-600">{h.asset_class ?? '—'}</td>
-                      <td className="px-4 py-2 text-sm text-right">${formatDollars(h.value)}</td>
-                      <td className="px-4 py-2 text-sm text-right">{h.weight_pct != null ? formatPct(h.weight_pct) : '—'}</td>
-                      <td className="px-4 py-2 text-sm">{h.grade != null ? h.grade : '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Holdings by asset class</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              Holdings grouped by asset class with subtotals and model target comparison (as of {new Date(snap.snapshot.as_of_date).toLocaleDateString('en-US')}).
+            </p>
+            {(() => {
+              const holdings = snap.snapshot.holdings || [];
+              const totalValue = Number(snap.snapshot.total_value) || 0;
+              const allocationsByAc = new Map((snap.allocations || []).map((a) => [a.asset_class, a]));
+              const byAssetClass = new Map<string, typeof holdings>();
+              for (const h of holdings) {
+                const ac = h.asset_class?.trim() || '—';
+                if (!byAssetClass.has(ac)) byAssetClass.set(ac, []);
+                byAssetClass.get(ac)!.push(h);
+              }
+              const allocationOrder = (snap.allocations || []).map((a) => a.asset_class);
+              const otherAcs = [...byAssetClass.keys()].filter((ac) => !allocationOrder.includes(ac));
+              const orderedAcs = [...allocationOrder.filter((ac) => byAssetClass.has(ac)), ...otherAcs];
+
+              if (orderedAcs.length === 0) {
+                return <p className="text-sm text-gray-500">No holdings in this snapshot.</p>;
+              }
+
+              return (
+                <div className="space-y-6">
+                  {orderedAcs.map((assetClass) => {
+                    const rows = byAssetClass.get(assetClass) || [];
+                    const subtotalValue = rows.reduce((sum, h) => sum + Number(h.value), 0);
+                    const actualPct = totalValue > 0 ? (subtotalValue / totalValue) * 100 : 0;
+                    const allocation = allocationsByAc.get(assetClass);
+                    const targetPct = allocation != null ? Number(allocation.target_pct) : null;
+                    const driftPct = allocation != null ? Number(allocation.drift_pct) : null;
+
+                    return (
+                      <div key={assetClass} className="border border-gray-200 rounded-lg overflow-hidden">
+                        <div className="bg-gray-50 px-4 py-2 border-b border-gray-200">
+                          <span className="text-sm font-semibold text-gray-800">{assetClass}</span>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="min-w-full divide-y divide-gray-200">
+                            <thead className="bg-gray-50">
+                              <tr>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Ticker</th>
+                                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Value</th>
+                                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Weight %</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Grade</th>
+                              </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                              {rows.map((h, i) => (
+                                <tr key={i}>
+                                  <td className="px-4 py-2 text-sm text-gray-900">{h.ticker}</td>
+                                  <td className="px-4 py-2 text-sm text-right">${formatDollars(h.value)}</td>
+                                  <td className="px-4 py-2 text-sm text-right">{h.weight_pct != null ? formatPct(h.weight_pct) : '—'}</td>
+                                  <td className="px-4 py-2 text-sm">{h.grade != null ? h.grade : '—'}</td>
+                                </tr>
+                              ))}
+                              <tr className="bg-gray-50 font-medium">
+                                <td className="px-4 py-2 text-sm text-gray-900">Subtotal</td>
+                                <td className="px-4 py-2 text-sm text-right">${formatDollars(subtotalValue)}</td>
+                                <td className="px-4 py-2 text-sm text-right">{formatPct(actualPct)}</td>
+                                <td className="px-4 py-2 text-sm">—</td>
+                              </tr>
+                              {(targetPct != null || driftPct != null) && (
+                                <tr className="bg-indigo-50/50 border-t-2 border-indigo-100">
+                                  <td colSpan={2} className="px-4 py-2 text-xs text-gray-600">
+                                    Model target: {targetPct != null ? formatPct(targetPct) : '—'}
+                                    {driftPct != null && (
+                                      <span className={`ml-3 ${driftPct >= 0 ? 'text-amber-600' : 'text-gray-600'}`}>
+                                        Drift {formatPct(driftPct)}
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td colSpan={2} className="px-4 py-2 text-xs text-gray-500">
+                                    Actual {formatPct(actualPct)} vs target {targetPct != null ? formatPct(targetPct) : '—'}
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         </>
       )}

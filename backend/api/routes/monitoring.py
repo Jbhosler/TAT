@@ -1,6 +1,7 @@
 """
 Monitoring module endpoints: strategy name mapping, ingest, accounts, snapshots.
 """
+import hashlib
 import logging
 from datetime import date
 from typing import List, Optional
@@ -9,6 +10,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
+from sqlalchemy import desc, func
 
 from backend.database.connection import get_db
 from backend.api.models.database import (
@@ -19,6 +21,7 @@ from backend.api.models.database import (
     MonitoredAccount,
     AccountSnapshot,
     AccountSnapshotHolding,
+    MonitoringIngestRun,
 )
 from backend.api.models.schemas import (
     StrategyNameMappingCreate,
@@ -29,9 +32,11 @@ from backend.api.models.schemas import (
     AccountSnapshotResponse,
     AccountSnapshotHoldingResponse,
     IngestResponse,
+    LastIngestResponse,
     SnapshotWithBreakdown,
     AssetClassAllocation,
     ConcentrationReportItem,
+    ConcentrationAccountItem,
     TopOffenderItem,
     UnmappedTickerItem,
 )
@@ -110,14 +115,36 @@ async def delete_strategy_mapping(
     return {"message": "Mapping deleted"}
 
 
+def _file_checksum(csv_content: str) -> str:
+    """SHA256 hash of normalized content to detect duplicate file ingest."""
+    return hashlib.sha256(csv_content.encode("utf-8")).hexdigest()
+
+
 @router.post("/ingest", response_model=IngestResponse)
 async def ingest_aggregated_holdings(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """Ingest aggregated holdings CSV. Validates cash consistency and strategy mapping; persists accounts and snapshots."""
+    """Ingest aggregated holdings CSV. Saves accounts and snapshots; heat map is computed only when a new file is ingested (duplicate file skipped)."""
     body = await request.body()
     csv_content = body.decode("utf-8-sig").strip()
+    file_checksum = _file_checksum(csv_content)
+
+    # Skip processing if the same file was already ingested (heat map calculation only on new file)
+    latest_run = (
+        db.query(MonitoringIngestRun)
+        .order_by(desc(MonitoringIngestRun.ingested_at))
+        .first()
+    )
+    if latest_run and latest_run.file_checksum == file_checksum:
+        logger.info("Monitoring ingest: same file already ingested (checksum %s), skipping", file_checksum[:16])
+        return IngestResponse(
+            ingested_count=0,
+            skipped_count=0,
+            data_inconsistency_synthetic_ids=[],
+            as_of_date=latest_run.as_of_date,
+            last_ingest_at=latest_run.ingested_at,
+        )
 
     try:
         groups = parse_aggregated_holdings_csv(csv_content)
@@ -233,7 +260,15 @@ async def ingest_aggregated_holdings(
             ))
         ingested_count += 1
 
+    # Record this ingest run so we know when heat map data was last updated
+    ingest_run = MonitoringIngestRun(
+        ingested_count=ingested_count,
+        as_of_date=as_of_date_used,
+        file_checksum=file_checksum,
+    )
+    db.add(ingest_run)
     db.commit()
+    db.refresh(ingest_run)
     logger.info(
         "Monitoring ingest: ingested=%s skipped=%s data_inconsistency=%s",
         ingested_count, skipped_count, len(data_inconsistency_synthetic_ids),
@@ -243,7 +278,21 @@ async def ingest_aggregated_holdings(
         skipped_count=skipped_count,
         data_inconsistency_synthetic_ids=data_inconsistency_synthetic_ids,
         as_of_date=as_of_date_used,
+        last_ingest_at=ingest_run.ingested_at,
     )
+
+
+@router.get("/last-ingest", response_model=LastIngestResponse)
+async def get_last_ingest(db: Session = Depends(get_db)):
+    """Return when heat map data was last updated (from most recent ingest run)."""
+    latest = (
+        db.query(MonitoringIngestRun)
+        .order_by(desc(MonitoringIngestRun.ingested_at))
+        .first()
+    )
+    if not latest:
+        return LastIngestResponse(last_ingest_at=None, as_of_date=None)
+    return LastIngestResponse(last_ingest_at=latest.ingested_at, as_of_date=latest.as_of_date)
 
 
 @router.get("/accounts", response_model=List[MonitoredAccountListItem])
@@ -406,7 +455,6 @@ async def get_account_snapshots(
 
 def _get_latest_snapshot_date(db: Session) -> Optional[date]:
     """Return the latest as_of_date across all snapshots, or None."""
-    from sqlalchemy import func
     row = db.query(func.max(AccountSnapshot.as_of_date)).first()
     return row[0] if row and row[0] else None
 
@@ -456,6 +504,61 @@ async def get_concentration_report(
             )
         )
     result.sort(key=lambda x: (-float(x.total_value), x.ticker))
+    return result
+
+
+@router.get("/concentration-report/{ticker}/accounts", response_model=List[ConcentrationAccountItem])
+async def get_concentration_ticker_accounts(
+    ticker: str,
+    grade: int,
+    as_of_date: Optional[date] = None,
+    db: Session = Depends(get_db),
+):
+    """List accounts holding a given ticker at the given grade (1 or 2) with value and pct of total."""
+    if grade not in (1, 2):
+        raise HTTPException(status_code=400, detail="grade must be 1 or 2")
+    snapshot_date = as_of_date or _get_latest_snapshot_date(db)
+    if not snapshot_date:
+        return []
+    snapshots = db.query(AccountSnapshot).filter(AccountSnapshot.as_of_date == snapshot_date).all()
+    snapshot_ids = [s.id for s in snapshots]
+    ticker_clean = (ticker or "").strip()
+    holdings = (
+        db.query(AccountSnapshotHolding, AccountSnapshot.monitored_account_id)
+        .join(AccountSnapshot, AccountSnapshotHolding.account_snapshot_id == AccountSnapshot.id)
+        .filter(
+            AccountSnapshotHolding.account_snapshot_id.in_(snapshot_ids),
+            AccountSnapshotHolding.grade == grade,
+            func.lower(AccountSnapshotHolding.ticker) == ticker_clean.lower(),
+            AccountSnapshotHolding.ticker != "CASH",
+        )
+        .all()
+    )
+    if not holdings:
+        return []
+    total_value = sum(Decimal(str(h[0].value)) for h in holdings)
+    account_by_id = {acc.id: acc for acc in db.query(MonitoredAccount).filter(
+        MonitoredAccount.id.in_({h[1] for h in holdings})
+    ).all()}
+    result = []
+    for h, acc_id in holdings:
+        acc = account_by_id.get(acc_id)
+        adviser = acc.advisor if acc else None
+        partial = (acc.account_display or (acc.synthetic_id[:8] + "…") if acc and acc.synthetic_id else None) if acc else None
+        if not partial and acc:
+            partial = (acc.synthetic_id or "")[:8] + "…"
+        val = Decimal(str(h.value))
+        pct = (val / total_value * Decimal("100")).quantize(Decimal("0.01")) if total_value else Decimal("0")
+        result.append(
+            ConcentrationAccountItem(
+                account_id=acc_id,
+                adviser=adviser,
+                partial_account_number=partial,
+                value=val,
+                pct_of_total=pct,
+            )
+        )
+    result.sort(key=lambda x: (-float(x.value), x.adviser or "", x.partial_account_number or ""))
     return result
 
 

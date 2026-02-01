@@ -86,6 +86,12 @@ function App() {
             isAuthenticated() ? <MonitoringPage /> : <Navigate to="/" replace />
           }
         />
+        <Route
+          path="/monitoring/concentration/accounts/:ticker/:grade"
+          element={
+            isAuthenticated() ? <MonitoringPage /> : <Navigate to="/" replace />
+          }
+        />
       </Routes>
     </Router>
   );
