@@ -181,13 +181,26 @@ class StrategyNameMapping(Base):
     strategy = relationship("Strategy", back_populates="strategy_name_mappings")
 
 
+class DiscoveryModel(Base):
+    """Bridge between vendor model names and internal strategies. Tracks all models seen in ingest; internal_strategy_id is null until mapped."""
+    __tablename__ = "discovery_models"
+
+    external_model_name = Column(String(255), nullable=False, unique=True)
+    internal_strategy_id = Column(UUID(as_uuid=True), ForeignKey("strategies.id"), nullable=True)
+    last_seen = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    is_active = Column(Boolean, nullable=False, default=True)
+
+    strategy = relationship("Strategy", backref="discovery_models")
+
+
 class MonitoredAccount(Base):
     """One row per synthetic account (Monitoring module)."""
     __tablename__ = "monitored_accounts"
 
     synthetic_id = Column(String(64), nullable=False, unique=True)
     friendly_name = Column(String(255), nullable=True)
-    internal_strategy_id = Column(UUID(as_uuid=True), ForeignKey("strategies.id"), nullable=False)
+    internal_strategy_id = Column(UUID(as_uuid=True), ForeignKey("strategies.id"), nullable=True)  # Null for unmapped models
+    external_model_name = Column(String(255), nullable=True)  # Vendor model name (for discovery reporting)
     firm = Column(String(255), nullable=True)
     advisor = Column(String(255), nullable=True)
     account_display = Column(String(255), nullable=True)  # Partial/masked account (e.g. ****5038)
@@ -207,6 +220,7 @@ class AccountSnapshot(Base):
     total_deviation_score = Column(Numeric(10, 3), nullable=False)
     purity_score = Column(Numeric(5, 2), nullable=False)
     cash_pct = Column(Numeric(5, 2), nullable=True)  # Cash as % of account value
+    is_unmapped = Column(Boolean, nullable=False, default=False)  # True when account has no strategy mapping
 
     monitored_account = relationship("MonitoredAccount", back_populates="snapshots")
     holdings = relationship("AccountSnapshotHolding", back_populates="account_snapshot", cascade="all, delete-orphan")

@@ -5,7 +5,7 @@ No DB dependency; accepts pre-loaded strategy positions and product equivalents.
 """
 import logging
 from decimal import Decimal, ROUND_HALF_UP
-from typing import List, Dict, Tuple, Any
+from typing import Any, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -166,3 +166,44 @@ def get_allocations_breakdown(
             "drift_pct": drift,
         })
     return out
+
+
+def aggregate_all_vendor_models(processed_accounts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Aggregates assets by Advisor and Model Name from the raw parsed CSV data.
+    Input matches the return type of parse_aggregated_holdings_csv.
+    Uses Decimal for all value aggregations (0.1% precision standard).
+    """
+    summary: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for account in processed_accounts:
+        if account.get("data_inconsistency"):
+            continue
+        advisor = (account.get("advisor") or "").strip()
+        external_model_name = (account.get("external_model_name") or "").strip()
+        key = (advisor, external_model_name)
+        if key not in summary:
+            summary[key] = {
+                "advisor": advisor,
+                "external_model_name": external_model_name,
+                "total_assets": Decimal("0"),
+                "account_count": 0,
+                "firm": (account.get("firm") or "").strip(),
+            }
+        total_value = account.get("total_value")
+        if total_value is not None:
+            summary[key]["total_assets"] += Decimal(str(total_value))
+        summary[key]["account_count"] += 1
+    out = []
+    for v in summary.values():
+        v["total_assets"] = round_to_precision(v["total_assets"])
+        out.append(v)
+    return out
+
+
+def get_unmapped_model_summary(holdings_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Returns a list of dictionaries grouped by advisor and external_model_name,
+    summing total_value and counting accounts. Uses Decimal for all value aggregations.
+    Input is the output of parse_aggregated_holdings_csv (skips data_inconsistency rows).
+    """
+    return aggregate_all_vendor_models(holdings_data)

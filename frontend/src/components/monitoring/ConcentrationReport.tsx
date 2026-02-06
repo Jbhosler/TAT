@@ -25,7 +25,12 @@ type UnmappedItem = {
   strategy_names: string[];
 };
 
-const ConcentrationReport = () => {
+type ConcentrationReportProps = {
+  /** When this changes (e.g. after ingest), concentration data is refetched. */
+  refreshTrigger?: string | null;
+};
+
+const ConcentrationReport = ({ refreshTrigger }: ConcentrationReportProps) => {
   const [asOfDate, setAsOfDate] = useState<string | null>(null);
   const [concentration, setConcentration] = useState<ConcentrationItem[]>([]);
   const [topOffenders, setTopOffenders] = useState<TopOffenderItem[]>([]);
@@ -56,7 +61,7 @@ const ConcentrationReport = () => {
 
   useEffect(() => {
     load();
-  }, [asOfDate]);
+  }, [asOfDate, refreshTrigger ?? '']);
 
   const formatDollars = (v: number) =>
     Number(v).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });

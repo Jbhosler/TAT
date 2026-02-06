@@ -31,7 +31,7 @@ const HeatMap = ({ refreshTrigger }: HeatMapProps) => {
     try {
       // Load accounts; lastIngest is optional (404 if backend not yet deployed with ingest-runs)
       const [accountsRes, lastRes] = await Promise.allSettled([
-        monitoringAPI.listAccounts(),
+        monitoringAPI.listAccounts({ mapped_only: true }),
         monitoringAPI.lastIngest(),
       ]);
       if (accountsRes.status === 'fulfilled') {
@@ -90,7 +90,7 @@ const HeatMap = ({ refreshTrigger }: HeatMapProps) => {
         </button>
       </div>
       <p className="text-sm text-gray-500 mb-4">
-        Monitored accounts ranked by deviation. Click View to drill down.
+        Mapped accounts only, ranked by deviation. Click View to drill down.
         {lastIngestAt && (
           <span className="block mt-1 text-gray-400">
             Data from last ingest: {new Date(lastIngestAt).toLocaleString('en-US')}

@@ -330,7 +330,7 @@ class MonitoredAccountResponse(BaseModel):
     id: UUID
     synthetic_id: str
     friendly_name: Optional[str] = None
-    internal_strategy_id: UUID
+    internal_strategy_id: Optional[UUID] = None
     firm: Optional[str] = None
     advisor: Optional[str] = None
     account_display: Optional[str] = None
@@ -388,6 +388,7 @@ class IngestResponse(BaseModel):
     data_inconsistency_synthetic_ids: List[str] = []
     as_of_date: Optional[date] = None
     last_ingest_at: Optional[datetime] = None  # When heat map data was last updated (only on new file ingest)
+    duplicate_file_skipped: bool = False  # True when same file was already ingested and processing was skipped
 
 
 class LastIngestResponse(BaseModel):
@@ -402,7 +403,7 @@ class MonitoredAccountListItem(BaseModel):
     synthetic_id: str
     friendly_name: Optional[str] = None
     strategy_name: Optional[str] = None
-    internal_strategy_id: UUID
+    internal_strategy_id: Optional[UUID] = None
     firm: Optional[str] = None
     advisor: Optional[str] = None
     account_display: Optional[str] = None
@@ -446,3 +447,89 @@ class UnmappedTickerItem(BaseModel):
     ticker: str
     total_value: Decimal
     strategy_names: List[str] = []  # Strategies where this ticker appears but is unmapped
+
+
+class AdviserAccountDetailItem(BaseModel):
+    """One row in account-by-adviser table: account + legacy ticker + model ticker it maps to."""
+    account_id: UUID
+    partial_account_number: Optional[str] = None
+    account_value: Decimal
+    legacy_ticker: str
+    model_ticker: str
+
+
+class LegacyTickerTotalItem(BaseModel):
+    """Totals by legacy ticker for an adviser: total value and number of accounts."""
+    legacy_ticker: str
+    total_value: Decimal
+    account_count: int
+
+
+class AdviserAccountDetailsResponse(BaseModel):
+    """Account details by adviser: table rows and legacy ticker totals."""
+    accounts: List[AdviserAccountDetailItem] = []
+    legacy_totals: List[LegacyTickerTotalItem] = []
+
+
+# Discovery module schemas (unmapped model tracking)
+class DiscoveryModelSummaryItem(BaseModel):
+    """One row in discovery summary: advisor + external model with total assets and account count."""
+    advisor: str
+    external_model_name: str
+    firm: Optional[str] = None
+    total_assets: Decimal
+    account_count: int
+    internal_strategy_id: Optional[UUID] = None
+    is_mapped: bool
+
+
+class AdvisorTotalItem(BaseModel):
+    """Total assets per advisor (for discovery view)."""
+    advisor: str
+    total_assets: Decimal
+
+
+class DiscoveryResponse(BaseModel):
+    """GET /api/monitoring/discovery: aggregated summary of all models (mapped and unmapped)."""
+    models: List[DiscoveryModelSummaryItem] = []
+    total_assets_by_advisor: List[AdvisorTotalItem] = []
+
+
+class DiscoveryMapRequest(BaseModel):
+    """POST /api/monitoring/discovery/map: create or update model -> strategy mapping."""
+    external_model_name: str = Field(..., max_length=255)
+    internal_strategy_id: UUID
+
+
+class DiscoveryModelResponse(BaseModel):
+    """Discovery model record (for map response)."""
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
+    id: UUID
+    external_model_name: str
+    internal_strategy_id: Optional[UUID] = None
+    last_seen: Optional[datetime] = None
+    is_active: bool
+
+
+# Total Firm (Monitoring subtab: all accounts with summary by model)
+class TotalFirmModelSummaryItem(BaseModel):
+    """Total value by model for Total Firm summary section."""
+    model_name: str
+    total_value: Decimal
+    account_count: int
+
+
+class TotalFirmAccountItem(BaseModel):
+    """One account row in Total Firm table."""
+    id: UUID
+    advisor: Optional[str] = None
+    partial_account_number: Optional[str] = None
+    model_name: Optional[str] = None
+    total_value: Decimal
+    has_equivalents: bool  # True if snapshot has any Grade 1 or 2 holdings
+
+
+class TotalFirmResponse(BaseModel):
+    """GET /api/monitoring/total-firm: summary by model + all accounts table."""
+    summary_by_model: List[TotalFirmModelSummaryItem] = []
+    accounts: List[TotalFirmAccountItem] = []

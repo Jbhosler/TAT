@@ -275,7 +275,7 @@ def _aggregated_header_indices(headers: List[str]) -> Dict[str, int]:
     cash_candidates = ["cash as position", "cash as po"]
     name_to_key = [
         ("account", ["account"]),
-        ("advisor", ["advisor"]),
+        ("advisor", ["advisor", "adviser"]),
         ("model", ["model"]),
         ("firm", ["firm"]),
         ("enterprise", ["enterprise"]),

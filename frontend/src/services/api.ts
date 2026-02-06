@@ -129,11 +129,26 @@ export const monitoringAPI = {
   updateStrategyMapping: (id: string, body: { external_model_name: string; internal_strategy_id: string }) =>
     api.put(`/api/monitoring/strategy-mappings/${id}`, body),
   deleteStrategyMapping: (id: string) => api.delete(`/api/monitoring/strategy-mappings/${id}`),
-  ingest: (csvContent: string) =>
-    api.post('/api/monitoring/ingest', csvContent, { headers: { 'Content-Type': 'text/csv' } }),
+  ingest: (csvContent: string, params?: { force?: boolean }) =>
+    api.post('/api/monitoring/ingest', csvContent, {
+      headers: { 'Content-Type': 'text/csv' },
+      params: params?.force ? { force: 'true' } : undefined,
+    }),
   lastIngest: () => api.get<{ last_ingest_at: string | null; as_of_date: string | null }>('/api/monitoring/last-ingest'),
-  listAccounts: (params?: { as_of_date?: string }) =>
+  listAccounts: (params?: { as_of_date?: string; mapped_only?: boolean }) =>
     api.get('/api/monitoring/accounts', { params }),
+  totalFirm: (params?: { as_of_date?: string }) =>
+    api.get<{
+      summary_by_model: Array<{ model_name: string; total_value: number; account_count: number }>;
+      accounts: Array<{
+        id: string;
+        advisor: string | null;
+        partial_account_number: string | null;
+        model_name: string | null;
+        total_value: number;
+        has_equivalents: boolean;
+      }>;
+    }>('/api/monitoring/total-firm', { params }),
   getAccount: (id: string) => api.get(`/api/monitoring/accounts/${id}`),
   updateAccount: (id: string, body: { friendly_name?: string }) =>
     api.patch(`/api/monitoring/accounts/${id}`, body),
@@ -147,6 +162,9 @@ export const monitoringAPI = {
     api.get('/api/monitoring/top-offenders', { params }),
   unmappedTickers: (params?: { as_of_date?: string }) =>
     api.get('/api/monitoring/unmapped-tickers', { params }),
+  listAdvisers: () => api.get<string[]>('/api/monitoring/advisers'),
+  getAdviserAccounts: (adviser: string, params?: { as_of_date?: string }) =>
+    api.get<{ accounts: Array<{ account_id: string; partial_account_number: string | null; account_value: number; legacy_ticker: string; model_ticker: string }>; legacy_totals: Array<{ legacy_ticker: string; total_value: number; account_count: number }> }>('/api/monitoring/adviser-accounts', { params: { adviser, ...params } }),
 };
 
 export default api;
