@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { monitoringAPI } from '../../services/api';
 
 const AggregatedHoldingsUpload = () => {
@@ -83,6 +84,11 @@ const AggregatedHoldingsUpload = () => {
         <div className="mt-4 p-3 bg-gray-50 rounded text-sm space-y-1">
           <p>Ingested: <strong>{ingestResult.ingested_count}</strong></p>
           <p>Skipped (unmapped): <strong>{ingestResult.skipped_count}</strong></p>
+          <p>
+            <Link to="/monitoring" className="text-indigo-600 hover:text-indigo-800 font-medium">
+              View changes from prior upload →
+            </Link>
+          </p>
           {ingestResult.data_inconsistency_synthetic_ids.length > 0 && (
             <p className="text-amber-700">
               Data inconsistency (cash mismatch): {ingestResult.data_inconsistency_synthetic_ids.length} account(s) — {ingestResult.data_inconsistency_synthetic_ids.slice(0, 3).join(', ')}

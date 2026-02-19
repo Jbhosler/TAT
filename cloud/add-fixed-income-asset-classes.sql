@@ -18,4 +18,5 @@ ALTER TYPE asset_class_enum ADD VALUE IF NOT EXISTS 'Inflation Protection';
 ALTER TYPE asset_class_enum ADD VALUE IF NOT EXISTS 'ST High Yield';
 ALTER TYPE asset_class_enum ADD VALUE IF NOT EXISTS 'High Yield';
 ALTER TYPE asset_class_enum ADD VALUE IF NOT EXISTS 'Private Credit';
+ALTER TYPE asset_class_enum ADD VALUE IF NOT EXISTS 'International Bond';
 ALTER TYPE asset_class_enum ADD VALUE IF NOT EXISTS 'Cash';

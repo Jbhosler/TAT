@@ -39,6 +39,7 @@ class AssetClass(str, enum.Enum):
     ST_HIGH_YIELD = "ST High Yield"
     HIGH_YIELD = "High Yield"
     PRIVATE_CREDIT = "Private Credit"
+    INTERNATIONAL_BOND = "International Bond"
     # Cash
     CASH = "Cash"  # For residuals
 

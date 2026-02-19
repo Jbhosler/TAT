@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import StrategyEditor from './StrategyEditor';
+import StrategyBridge from '../monitoring/StrategyBridge';
 import BulkUpload from './BulkUpload';
 import AssetClassMapper from './AssetClassMapper';
 import ProductEquivalents from './ProductEquivalents';
@@ -8,7 +9,7 @@ import DataIntegrity from './DataIntegrity';
 import AggregatedHoldingsUpload from './AggregatedHoldingsUpload';
 
 const AdminPanel = () => {
-  const [activeTab, setActiveTab] = useState<'editor' | 'upload' | 'mapper' | 'equivalents' | 'integrity' | 'holdings'>('editor');
+  const [activeTab, setActiveTab] = useState<'editor' | 'bridge' | 'upload' | 'mapper' | 'equivalents' | 'integrity' | 'holdings'>('editor');
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -20,6 +21,9 @@ const AdminPanel = () => {
                 <h1 className="text-xl font-bold text-gray-900">
                   Admin Panel
                 </h1>
+                <span className="ml-2 text-xs text-gray-400" title="Build time">
+                  {typeof __BUILD_TIME__ !== 'undefined' ? new Date(__BUILD_TIME__).toLocaleString() : ''}
+                </span>
               </div>
             </div>
             <div className="flex items-center gap-4">
@@ -60,6 +64,16 @@ const AdminPanel = () => {
                 } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
               >
                 Strategy Editor
+              </button>
+              <button
+                onClick={() => setActiveTab('bridge')}
+                className={`${
+                  activeTab === 'bridge'
+                    ? 'border-indigo-500 text-indigo-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
+              >
+                Strategy Bridge
               </button>
               <button
                 onClick={() => setActiveTab('upload')}
@@ -117,6 +131,7 @@ const AdminPanel = () => {
           {/* Tab Content */}
           <div className="mt-6">
             {activeTab === 'editor' && <StrategyEditor />}
+            {activeTab === 'bridge' && <StrategyBridge />}
             {activeTab === 'upload' && <BulkUpload />}
             {activeTab === 'mapper' && <AssetClassMapper />}
             {activeTab === 'equivalents' && <ProductEquivalents />}

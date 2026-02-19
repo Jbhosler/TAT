@@ -42,6 +42,7 @@ CREATE TYPE asset_class_enum AS ENUM (
     'ST High Yield',
     'High Yield',
     'Private Credit',
+    'International Bond',
     'Cash'
 );
 

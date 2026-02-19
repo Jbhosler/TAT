@@ -204,6 +204,28 @@ async def upload_product_equivalents(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.delete("/product-equivalents/{strategy_id}/{equivalent_id}")
+async def delete_product_equivalent(
+    strategy_id: UUID,
+    equivalent_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """Delete a single product equivalent by ID."""
+    pe = (
+        db.query(ProductEquivalent)
+        .filter(
+            ProductEquivalent.id == equivalent_id,
+            ProductEquivalent.strategy_id == strategy_id,
+        )
+        .first()
+    )
+    if not pe:
+        raise HTTPException(status_code=404, detail="Product equivalent not found")
+    db.delete(pe)
+    db.commit()
+    return {"message": "Product equivalent deleted"}
+
+
 @router.get("/sanity-check", response_model=SanityCheckResponse)
 async def get_sanity_check(db: Session = Depends(get_db)):
     """

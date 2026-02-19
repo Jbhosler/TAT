@@ -76,10 +76,11 @@ if ($LASTEXITCODE -ne 0) {
 gsutil -m rsync -r -d $frontendDist "gs://$BUCKET_NAME"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-Write-Host "Setting content types..." -ForegroundColor Gray
+Write-Host "Setting content types and cache headers..." -ForegroundColor Gray
 $ErrorActionPreferenceSave = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-gsutil -m setmeta -h "Content-Type:text/html" "gs://$BUCKET_NAME/*.html" 2>&1 | Out-Null
+# index.html: no-cache so browser always fetches latest (avoids stale app after deploy)
+gsutil -m setmeta -h "Content-Type:text/html" -h "Cache-Control:no-cache, no-store, must-revalidate" "gs://$BUCKET_NAME/*.html" 2>&1 | Out-Null
 gsutil -m setmeta -h "Content-Type:application/javascript" "gs://$BUCKET_NAME/assets/*.js" 2>&1 | Out-Null
 gsutil -m setmeta -h "Content-Type:text/css" "gs://$BUCKET_NAME/assets/*.css" 2>&1 | Out-Null
 gsutil iam ch allUsers:objectViewer "gs://$BUCKET_NAME" 2>&1 | Out-Null

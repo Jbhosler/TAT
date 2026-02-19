@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { adminAPI, strategiesAPI } from '../../services/api';
 
 const AssetClassMapper = () => {
   const [strategies, setStrategies] = useState<any[]>([]);
   const [selectedStrategy, setSelectedStrategy] = useState<any>(null);
   const [mappings, setMappings] = useState<Record<string, string>>({});
+  const mappingsRef = useRef<Record<string, string>>({});
   const [assetClasses, setAssetClasses] = useState<string[]>([]);
 
   useEffect(() => {
@@ -40,21 +41,57 @@ const AssetClassMapper = () => {
     if (!selectedStrategy) return;
 
     // Build mappings from strategy positions
-    const mappings: Record<string, string> = {};
+    const next: Record<string, string> = {};
     selectedStrategy.positions?.forEach((pos: any) => {
-      mappings[pos.model_ticker] = pos.asset_class;
+      next[pos.model_ticker] = pos.asset_class;
     });
-    setMappings(mappings);
+    setMappings(next);
+    mappingsRef.current = next;
   };
 
+  const assetClassesFallback = assetClasses.length > 0 ? assetClasses : [
+    'US Large Core', 'US Large Growth', 'US Large Value', 'US Midcap Growth', 'US Midcap Value',
+    'US Small Cap', 'International Developed', 'Emerging Markets', 'Fixed Income',
+    'Emg Bond LC', 'Emg Bond Hedged', 'ST Corp', 'IT Corp', 'LT Corp', 'ST Govt', 'IT Govt', 'LT Govt',
+    'Tactical Cash', 'Ultra ST Bond', 'Aggregate', 'Mortgage Backed', 'Inflation Protection',
+    'ST High Yield', 'High Yield', 'Private Credit', 'International Bond',
+  ];
+
   const handleMappingChange = (modelTicker: string, assetClass: string) => {
-    setMappings({ ...mappings, [modelTicker]: assetClass });
+    setMappings((prev) => {
+      const next = { ...prev, [modelTicker]: assetClass };
+      mappingsRef.current = next;
+      return next;
+    });
   };
 
   const handleSave = async () => {
-    // This would update the strategy positions with new mappings
-    // Implementation depends on API structure
-    alert('Mappings saved (implementation pending)');
+    if (!selectedStrategy) return;
+
+    const currentMappings = mappingsRef.current;
+    const positions = selectedStrategy.positions?.map((pos: any) => ({
+      model_ticker: pos.model_ticker,
+      asset_class: currentMappings[pos.model_ticker] ?? pos.asset_class,
+      target_allocation: pos.target_allocation,
+      drift_percentage: pos.drift_percentage,
+    })) ?? [];
+
+    if (positions.length === 0) {
+      alert('No positions to save.');
+      return;
+    }
+
+    try {
+      await strategiesAPI.update(selectedStrategy.id, { name: selectedStrategy.name, positions });
+      alert('Mappings saved successfully');
+      await loadStrategies();
+      const updated = (await strategiesAPI.list()).data?.find((s: any) => s.id === selectedStrategy.id);
+      if (updated) setSelectedStrategy(updated);
+    } catch (err: any) {
+      const detail = err.response?.data?.detail;
+      const msg = typeof detail === 'string' ? detail : JSON.stringify(detail ?? err.message ?? 'Unknown error');
+      alert(`Failed to save: ${msg}`);
+    }
   };
 
   return (
@@ -99,7 +136,7 @@ const AssetClassMapper = () => {
                     value={mappings[pos.model_ticker] || pos.asset_class}
                     onChange={(e) => handleMappingChange(pos.model_ticker, e.target.value)}
                   >
-                    {assetClasses.map(ac => (
+                    {assetClassesFallback.map(ac => (
                       <option key={ac} value={ac}>{ac}</option>
                     ))}
                   </select>

@@ -22,7 +22,7 @@ type HeatMapProps = {
 const HeatMap = ({ refreshTrigger }: HeatMapProps) => {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sortBy, setSortBy] = useState<'deviation' | 'value' | 'purity'>('deviation');
+  const [sortBy, setSortBy] = useState<'deviation' | 'value' | 'purity' | 'cash'>('deviation');
   const [sortDesc, setSortDesc] = useState(true);
   const [lastIngestAt, setLastIngestAt] = useState<string | null>(null);
 
@@ -65,9 +65,12 @@ const HeatMap = ({ refreshTrigger }: HeatMapProps) => {
     } else if (sortBy === 'value') {
       va = a.total_value ?? 0;
       vb = b.total_value ?? 0;
-    } else {
+    } else if (sortBy === 'purity') {
       va = a.purity_score ?? 0;
       vb = b.purity_score ?? 0;
+    } else {
+      va = a.cash_pct ?? 0;
+      vb = b.cash_pct ?? 0;
     }
     return sortDesc ? vb - va : va - vb;
   });
@@ -140,7 +143,17 @@ const HeatMap = ({ refreshTrigger }: HeatMapProps) => {
                     Purity % {sortBy === 'purity' ? (sortDesc ? '↓' : '↑') : ''}
                   </button>
                 </th>
-                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Cash %</th>
+                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">
+                  <button
+                    onClick={() => {
+                      setSortBy('cash');
+                      setSortDesc(sortBy === 'cash' ? !sortDesc : true);
+                    }}
+                    className="hover:text-indigo-600"
+                  >
+                    Cash % {sortBy === 'cash' ? (sortDesc ? '↓' : '↑') : ''}
+                  </button>
+                </th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">As Of Date</th>
                 <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
               </tr>

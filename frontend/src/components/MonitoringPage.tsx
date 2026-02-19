@@ -1,16 +1,16 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import StrategyBridge from './monitoring/StrategyBridge';
 import HeatMap from './monitoring/HeatMap';
 import TotalFirm from './monitoring/TotalFirm';
 import ConcentrationReport from './monitoring/ConcentrationReport';
 import AccountDetailsByAdviser from './monitoring/AccountDetailsByAdviser';
+import UploadChanges from './monitoring/UploadChanges';
 import AccountDrillDown from './monitoring/AccountDrillDown';
 import ConcentrationAccountList from './monitoring/ConcentrationAccountList';
 
 const MonitoringPage = () => {
   const { id: accountId, ticker, grade } = useParams<{ id?: string; ticker?: string; grade?: string }>();
-  const [activeTab, setActiveTab] = useState<'bridge' | 'heatmap' | 'totalfirm' | 'concentration' | 'byadviser'>('totalfirm');
+  const [activeTab, setActiveTab] = useState<'heatmap' | 'totalfirm' | 'concentration' | 'byadviser' | 'uploadchanges'>('totalfirm');
 
   if (accountId) {
     return (
@@ -93,16 +93,6 @@ const MonitoringPage = () => {
               Total Firm
             </button>
             <button
-              onClick={() => setActiveTab('bridge')}
-              className={`${
-                activeTab === 'bridge'
-                  ? 'border-indigo-500 text-indigo-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
-            >
-              Strategy Bridge
-            </button>
-            <button
               onClick={() => setActiveTab('heatmap')}
               className={`${
                 activeTab === 'heatmap'
@@ -132,15 +122,25 @@ const MonitoringPage = () => {
             >
               By Adviser
             </button>
+            <button
+              onClick={() => setActiveTab('uploadchanges')}
+              className={`${
+                activeTab === 'uploadchanges'
+                  ? 'border-indigo-500 text-indigo-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
+            >
+              Upload Changes
+            </button>
           </nav>
         </div>
 
         <div className="space-y-6">
           {activeTab === 'totalfirm' && <TotalFirm />}
-          {activeTab === 'bridge' && <StrategyBridge />}
           {activeTab === 'heatmap' && <HeatMap />}
           {activeTab === 'concentration' && <ConcentrationReport />}
           {activeTab === 'byadviser' && <AccountDetailsByAdviser />}
+          {activeTab === 'uploadchanges' && <UploadChanges />}
         </div>
       </main>
     </div>

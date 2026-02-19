@@ -539,3 +539,45 @@ class TotalFirmResponse(BaseModel):
     """GET /api/monitoring/total-firm: summary by model + all accounts table."""
     summary_by_model: List[TotalFirmModelSummaryItem] = []
     accounts: List[TotalFirmAccountItem] = []
+
+
+# Ingest changes (prior vs current upload)
+class IngestChangeAccountItem(BaseModel):
+    """Account in new/removed/material change list."""
+    id: str
+    synthetic_id: str
+    advisor: Optional[str] = None
+    partial_account_number: Optional[str] = None
+    model_name: Optional[str] = None
+    prior_value: Optional[Decimal] = None
+    current_value: Optional[Decimal] = None
+    value_change_pct: Optional[float] = None
+
+
+class IngestChangeAdviserItem(BaseModel):
+    """Adviser with account count change."""
+    adviser: str
+    prior_account_count: int
+    current_account_count: int
+    delta: int
+
+
+class IngestChangesResponse(BaseModel):
+    """GET /api/monitoring/ingest-changes: comparison of current vs prior upload."""
+    has_prior: bool = False
+    prior_date: Optional[date] = None
+    current_date: Optional[date] = None
+    # Summary
+    prior_account_count: int = 0
+    current_account_count: int = 0
+    prior_total_aum: Decimal = Decimal("0")
+    current_total_aum: Decimal = Decimal("0")
+    aum_change_pct: Optional[float] = None
+    # Changes
+    new_accounts: List[IngestChangeAccountItem] = []
+    removed_accounts: List[IngestChangeAccountItem] = []
+    material_value_changes: List[IngestChangeAccountItem] = []  # >10% change
+    new_advisers: List[str] = []
+    removed_advisers: List[str] = []
+    adviser_account_changes: List[IngestChangeAdviserItem] = []
+    accounts_with_holdings_changes: List[IngestChangeAccountItem] = []  # New/removed tickers

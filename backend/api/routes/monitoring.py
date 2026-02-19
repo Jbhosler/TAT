@@ -4,7 +4,7 @@ Monitoring module endpoints: strategy name mapping, ingest, accounts, snapshots.
 import hashlib
 import logging
 from datetime import date, datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from uuid import UUID
 from decimal import Decimal
 
@@ -52,6 +52,9 @@ from backend.api.models.schemas import (
     TotalFirmResponse,
     TotalFirmModelSummaryItem,
     TotalFirmAccountItem,
+    IngestChangesResponse,
+    IngestChangeAccountItem,
+    IngestChangeAdviserItem,
 )
 from backend.utils.csv_parser import parse_aggregated_holdings_csv
 from backend.logic.monitor_engine import (
@@ -606,6 +609,167 @@ async def get_last_ingest(db: Session = Depends(get_db)):
     if not latest:
         return LastIngestResponse(last_ingest_at=None, as_of_date=None)
     return LastIngestResponse(last_ingest_at=latest.ingested_at, as_of_date=latest.as_of_date)
+
+
+def _get_two_latest_snapshot_dates(db: Session) -> Tuple[Optional[date], Optional[date]]:
+    """Return (current_date, prior_date) - the two most recent as_of_dates. Prior is None if only one date exists."""
+    rows = (
+        db.query(AccountSnapshot.as_of_date)
+        .distinct()
+        .order_by(desc(AccountSnapshot.as_of_date))
+        .limit(2)
+        .all()
+    )
+    dates = [r[0] for r in rows if r[0]]
+    current = dates[0] if dates else None
+    prior = dates[1] if len(dates) >= 2 else None
+    return current, prior
+
+
+@router.get("/ingest-changes", response_model=IngestChangesResponse)
+async def get_ingest_changes(db: Session = Depends(get_db)):
+    """Compare current upload (latest as_of_date) vs prior upload. Shows new/removed accounts, material value changes (>10%), adviser changes, holdings changes."""
+    current_date, prior_date = _get_two_latest_snapshot_dates(db)
+    if not current_date or not prior_date:
+        return IngestChangesResponse(
+            has_prior=False,
+            current_date=current_date,
+            prior_date=prior_date,
+        )
+
+    # Accounts with snapshots for each date
+    prior_snapshots = (
+        db.query(AccountSnapshot, MonitoredAccount)
+        .join(MonitoredAccount, AccountSnapshot.monitored_account_id == MonitoredAccount.id)
+        .filter(AccountSnapshot.as_of_date == prior_date)
+        .all()
+    )
+    current_snapshots = (
+        db.query(AccountSnapshot, MonitoredAccount)
+        .join(MonitoredAccount, AccountSnapshot.monitored_account_id == MonitoredAccount.id)
+        .filter(AccountSnapshot.as_of_date == current_date)
+        .all()
+    )
+
+    prior_by_acc = {acc.id: (snap, acc) for snap, acc in prior_snapshots}
+    current_by_acc = {acc.id: (snap, acc) for snap, acc in current_snapshots}
+    prior_acc_ids = set(prior_by_acc.keys())
+    current_acc_ids = set(current_by_acc.keys())
+
+    new_account_ids = current_acc_ids - prior_acc_ids
+    removed_account_ids = prior_acc_ids - current_acc_ids
+    common_ids = prior_acc_ids & current_acc_ids
+
+    def _acc_item(acc_id: str, snap, acc, prior_val=None, current_val=None, change_pct=None) -> IngestChangeAccountItem:
+        partial = (acc.account_display or (acc.synthetic_id[:8] + "…") if acc.synthetic_id else "") or None
+        return IngestChangeAccountItem(
+            id=str(acc.id),
+            synthetic_id=acc.synthetic_id,
+            advisor=acc.advisor,
+            partial_account_number=partial,
+            model_name=(acc.external_model_name or "").strip() or None,
+            prior_value=prior_val,
+            current_value=current_val,
+            value_change_pct=change_pct,
+        )
+
+    new_accounts = [
+        _acc_item(aid, snap, acc, prior_val=None, current_val=snap.total_value)
+        for aid in new_account_ids
+        for snap, acc in [current_by_acc[aid]]
+    ]
+    removed_accounts = [
+        _acc_item(aid, snap, acc, prior_val=snap.total_value, current_val=None)
+        for aid in removed_account_ids
+        for snap, acc in [prior_by_acc[aid]]
+    ]
+
+    material_value_changes = []
+    for aid in common_ids:
+        prior_snap, prior_acc = prior_by_acc[aid]
+        curr_snap, curr_acc = current_by_acc[aid]
+        pv = float(prior_snap.total_value or 0)
+        cv = float(curr_snap.total_value or 0)
+        if pv <= 0:
+            continue
+        change_pct = ((cv - pv) / pv) * 100
+        if abs(change_pct) > 10:
+            material_value_changes.append(
+                _acc_item(aid, curr_snap, curr_acc, prior_val=prior_snap.total_value, current_val=curr_snap.total_value, change_pct=round(change_pct, 2))
+            )
+
+    prior_advisers = {a.advisor.strip() for _, a in prior_snapshots if a.advisor and str(a.advisor).strip()}
+    current_advisers = {a.advisor.strip() for _, a in current_snapshots if a.advisor and str(a.advisor).strip()}
+    new_advisers = sorted(current_advisers - prior_advisers)
+    removed_advisers = sorted(prior_advisers - current_advisers)
+
+    prior_count_by_adv = {}
+    for _, acc in prior_snapshots:
+        adv = (acc.advisor or "").strip() or "(blank)"
+        prior_count_by_adv[adv] = prior_count_by_adv.get(adv, 0) + 1
+    current_count_by_adv = {}
+    for _, acc in current_snapshots:
+        adv = (acc.advisor or "").strip() or "(blank)"
+        current_count_by_adv[adv] = current_count_by_adv.get(adv, 0) + 1
+    all_advisers = set(prior_count_by_adv.keys()) | set(current_count_by_adv.keys())
+    adviser_account_changes = [
+        IngestChangeAdviserItem(
+            adviser=adv,
+            prior_account_count=prior_count_by_adv.get(adv, 0),
+            current_account_count=current_count_by_adv.get(adv, 0),
+            delta=current_count_by_adv.get(adv, 0) - prior_count_by_adv.get(adv, 0),
+        )
+        for adv in sorted(all_advisers)
+    ]
+    adviser_account_changes = [a for a in adviser_account_changes if a.delta != 0]
+
+    prior_snap_ids = [snap.id for snap, _ in prior_snapshots]
+    current_snap_ids = [snap.id for snap, _ in current_snapshots]
+    all_snap_ids = prior_snap_ids + current_snap_ids
+    holdings_rows = (
+        db.query(AccountSnapshotHolding.account_snapshot_id, AccountSnapshotHolding.ticker)
+        .filter(AccountSnapshotHolding.account_snapshot_id.in_(all_snap_ids))
+        .all()
+    )
+    holdings_by_snap: dict = {}
+    for sid, ticker in holdings_rows:
+        if sid not in holdings_by_snap:
+            holdings_by_snap[sid] = set()
+        holdings_by_snap[sid].add(ticker)
+    prior_holdings = {sid: holdings_by_snap.get(sid, set()) for sid in prior_snap_ids}
+    current_holdings = {sid: holdings_by_snap.get(sid, set()) for sid in current_snap_ids}
+    accounts_with_holdings_changes = []
+    for aid in common_ids:
+        prior_snap, prior_acc = prior_by_acc[aid]
+        curr_snap, curr_acc = current_by_acc[aid]
+        ph = prior_holdings.get(prior_snap.id, set())
+        ch = current_holdings.get(curr_snap.id, set())
+        if ph != ch:
+            accounts_with_holdings_changes.append(
+                _acc_item(aid, curr_snap, curr_acc, prior_val=prior_snap.total_value, current_val=curr_snap.total_value)
+            )
+
+    prior_total = sum(float(s.total_value) for s, _ in prior_snapshots)
+    current_total = sum(float(s.total_value) for s, _ in current_snapshots)
+    aum_change_pct = ((current_total - prior_total) / prior_total * 100) if prior_total else None
+
+    return IngestChangesResponse(
+        has_prior=True,
+        prior_date=prior_date,
+        current_date=current_date,
+        prior_account_count=len(prior_acc_ids),
+        current_account_count=len(current_acc_ids),
+        prior_total_aum=Decimal(str(prior_total)),
+        current_total_aum=Decimal(str(current_total)),
+        aum_change_pct=round(aum_change_pct, 2) if aum_change_pct is not None else None,
+        new_accounts=new_accounts,
+        removed_accounts=removed_accounts,
+        material_value_changes=material_value_changes,
+        new_advisers=new_advisers,
+        removed_advisers=removed_advisers,
+        adviser_account_changes=adviser_account_changes,
+        accounts_with_holdings_changes=accounts_with_holdings_changes,
+    )
 
 
 @router.get("/accounts", response_model=List[MonitoredAccountListItem])

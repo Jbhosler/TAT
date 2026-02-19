@@ -93,13 +93,18 @@ const ProductEquivalents = () => {
     }
   };
 
-  const handleDelete = async (_id: string) => {
+  const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this product equivalent?')) {
       return;
     }
-
-    // Implementation would call delete API endpoint
-    alert('Delete functionality pending API implementation');
+    try {
+      await adminAPI.deleteProductEquivalent(selectedStrategy, id);
+      await monitoringAPI.recalculate({ strategy_id: selectedStrategy });
+      alert('Product equivalent deleted. Monitoring data recalculated.');
+      loadEquivalents();
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Failed to delete');
+    }
   };
 
   return (

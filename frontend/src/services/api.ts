@@ -103,6 +103,8 @@ export const adminAPI = {
     api.post(`/api/admin/product-equivalents/${strategyId}`, csvContent, {
       headers: { 'Content-Type': 'text/csv' },
     }),
+  deleteProductEquivalent: (strategyId: string, equivalentId: string) =>
+    api.delete(`/api/admin/product-equivalents/${strategyId}/${equivalentId}`),
   getSanityCheck: () => api.get('/api/admin/sanity-check'),
   sanityCheckPreflight: (strategyId: string, csvContent: string) =>
     api.post('/api/admin/sanity-check/preflight', { strategy_id: strategyId, csv_content: csvContent }),
@@ -139,6 +141,24 @@ export const monitoringAPI = {
       params: params?.strategy_id ? { strategy_id: params.strategy_id } : undefined,
     }),
   lastIngest: () => api.get<{ last_ingest_at: string | null; as_of_date: string | null }>('/api/monitoring/last-ingest'),
+  ingestChanges: () =>
+    api.get<{
+      has_prior: boolean;
+      prior_date: string | null;
+      current_date: string | null;
+      prior_account_count: number;
+      current_account_count: number;
+      prior_total_aum: number;
+      current_total_aum: number;
+      aum_change_pct: number | null;
+      new_accounts: Array<{ id: string; synthetic_id: string; advisor: string | null; partial_account_number: string | null; model_name: string | null; prior_value: number | null; current_value: number | null; value_change_pct: number | null }>;
+      removed_accounts: Array<{ id: string; synthetic_id: string; advisor: string | null; partial_account_number: string | null; model_name: string | null; prior_value: number | null; current_value: number | null; value_change_pct: number | null }>;
+      material_value_changes: Array<{ id: string; synthetic_id: string; advisor: string | null; partial_account_number: string | null; model_name: string | null; prior_value: number | null; current_value: number | null; value_change_pct: number | null }>;
+      new_advisers: string[];
+      removed_advisers: string[];
+      adviser_account_changes: Array<{ adviser: string; prior_account_count: number; current_account_count: number; delta: number }>;
+      accounts_with_holdings_changes: Array<{ id: string; synthetic_id: string; advisor: string | null; partial_account_number: string | null; model_name: string | null; prior_value: number | null; current_value: number | null; value_change_pct: number | null }>;
+    }>('/api/monitoring/ingest-changes'),
   listAccounts: (params?: { as_of_date?: string; mapped_only?: boolean }) =>
     api.get('/api/monitoring/accounts', { params }),
   totalFirm: (params?: { as_of_date?: string }) =>
