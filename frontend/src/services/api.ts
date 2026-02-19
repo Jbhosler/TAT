@@ -134,6 +134,10 @@ export const monitoringAPI = {
       headers: { 'Content-Type': 'text/csv' },
       params: params?.force ? { force: 'true' } : undefined,
     }),
+  recalculate: (params?: { strategy_id?: string }) =>
+    api.post<{ recalculated_count: number; last_ingest_at: string | null }>('/api/monitoring/recalculate', undefined, {
+      params: params?.strategy_id ? { strategy_id: params.strategy_id } : undefined,
+    }),
   lastIngest: () => api.get<{ last_ingest_at: string | null; as_of_date: string | null }>('/api/monitoring/last-ingest'),
   listAccounts: (params?: { as_of_date?: string; mapped_only?: boolean }) =>
     api.get('/api/monitoring/accounts', { params }),

@@ -45,8 +45,16 @@ const TotalFirm = ({ refreshTrigger }: TotalFirmProps) => {
     load();
   }, [refreshTrigger ?? '']);
 
-  const formatDollars = (v: number) =>
-    Number(v).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  const formatDollars = (v: number) => {
+    const n = Number(v);
+    if (Number.isNaN(n)) return '0';
+    return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  };
+
+  const totalValueAllStrategies = summaryByModel.reduce(
+    (sum, row) => sum + (Number(row.total_value) || 0),
+    0
+  );
 
   return (
     <div className="bg-white shadow rounded-lg p-6">
@@ -69,7 +77,12 @@ const TotalFirm = ({ refreshTrigger }: TotalFirmProps) => {
         <>
           {/* Summary by Model */}
           <div className="mb-6">
-            <h4 className="text-sm font-medium text-gray-700 mb-2">Summary by Model</h4>
+            <div className="flex items-center gap-4 mb-3">
+              <h4 className="text-sm font-medium text-gray-700">Summary by Model</h4>
+              <span className="text-sm font-semibold text-gray-900">
+                Total value across all strategies: ${formatDollars(totalValueAllStrategies)}
+              </span>
+            </div>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">

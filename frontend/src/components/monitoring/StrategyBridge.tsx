@@ -31,8 +31,7 @@ const StrategyBridge = () => {
   };
 
   useEffect(() => {
-    loadMappings();
-    loadStrategies();
+    Promise.all([loadMappings(), loadStrategies()]);
   }, []);
 
   const handleAdd = async () => {

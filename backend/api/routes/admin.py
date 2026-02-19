@@ -61,7 +61,8 @@ def _run_sanity_checks(
                     "grade": pe.grade,
                 })
 
-    # Multi-mapping: legacy_ticker -> multiple (strategy_id, model_ticker) pairs
+    # Multi-mapping: legacy_ticker mapped to different model tickers across strategies (conflict)
+    # Same legacy -> same model ticker in multiple strategies is OK; different model tickers is a conflict
     by_legacy: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for r in pe_rows:
         by_legacy[r["legacy_ticker"]].append(r)
@@ -69,8 +70,8 @@ def _run_sanity_checks(
     multi_mapping: List[MultiMappingConflict] = []
     seen_legacy_multi = set()
     for legacy, rows in by_legacy.items():
-        unique_pairs = {(r["strategy_id"], r["model_ticker"]) for r in rows}
-        if len(unique_pairs) <= 1:
+        unique_model_tickers = {r["model_ticker"] for r in rows}
+        if len(unique_model_tickers) <= 1:
             continue
         if legacy in seen_legacy_multi:
             continue

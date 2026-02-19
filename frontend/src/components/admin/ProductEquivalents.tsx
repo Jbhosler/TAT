@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { adminAPI, strategiesAPI } from '../../services/api';
+import { adminAPI, strategiesAPI, monitoringAPI } from '../../services/api';
 
 const ProductEquivalents = () => {
   const [strategies, setStrategies] = useState<any[]>([]);
@@ -84,7 +84,8 @@ const ProductEquivalents = () => {
 
     try {
       await adminAPI.uploadProductEquivalents(selectedStrategy, csvContent);
-      alert('Product equivalents uploaded successfully');
+      await monitoringAPI.recalculate({ strategy_id: selectedStrategy });
+      alert('Product equivalents uploaded successfully. Monitoring data recalculated.');
       setCsvContent('');
       loadEquivalents();
     } catch (err: any) {

@@ -397,6 +397,12 @@ class LastIngestResponse(BaseModel):
     as_of_date: Optional[date] = None
 
 
+class RecalculateResponse(BaseModel):
+    """Response from POST /api/monitoring/recalculate."""
+    recalculated_count: int = 0
+    last_ingest_at: Optional[datetime] = None
+
+
 class MonitoredAccountListItem(BaseModel):
     """List item for heat map (monitored account with latest snapshot)."""
     id: UUID

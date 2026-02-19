@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { strategiesAPI, adminAPI } from '../../services/api';
+import { strategiesAPI, adminAPI, monitoringAPI } from '../../services/api';
 
 const BulkUpload = () => {
   const [selectedStrategy, setSelectedStrategy] = useState('');
@@ -74,7 +74,8 @@ const BulkUpload = () => {
     setLoading(true);
     try {
       await strategiesAPI.bulkUpload(selectedStrategy, csvContent);
-      alert('Strategy updated successfully');
+      await monitoringAPI.recalculate({ strategy_id: selectedStrategy });
+      alert('Strategy updated successfully. Monitoring data recalculated.');
       setCsvContent('');
       setPreview([]);
     } catch (err: any) {

@@ -10,7 +10,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, func
+from sqlalchemy import and_, desc, func
 
 from backend.database.connection import get_db
 from backend.api.models.database import (
@@ -34,6 +34,7 @@ from backend.api.models.schemas import (
     AccountSnapshotHoldingResponse,
     IngestResponse,
     LastIngestResponse,
+    RecalculateResponse,
     SnapshotWithBreakdown,
     AssetClassAllocation,
     ConcentrationReportItem,
@@ -475,6 +476,125 @@ async def ingest_aggregated_holdings(
     )
 
 
+RECALCULATE_CHECKSUM = "RECALCULATE"
+
+
+@router.post("/recalculate", response_model=RecalculateResponse)
+async def recalculate_monitoring(
+    strategy_id: Optional[UUID] = Query(None, description="If set, only recalculate snapshots for accounts with this strategy."),
+    db: Session = Depends(get_db),
+):
+    """Recompute deviation scores, purity scores, and holdings metadata for all mapped snapshots using current strategy positions and product equivalents. Call after Product Equivalents or Bulk Upload (strategy positions) changes."""
+    snapshots = (
+        db.query(AccountSnapshot)
+        .join(MonitoredAccount, AccountSnapshot.monitored_account_id == MonitoredAccount.id)
+        .filter(AccountSnapshot.is_unmapped.is_(False))
+        .filter(MonitoredAccount.internal_strategy_id.isnot(None))
+    )
+    if strategy_id is not None:
+        snapshots = snapshots.filter(MonitoredAccount.internal_strategy_id == strategy_id)
+    snapshots = snapshots.all()
+
+    if not snapshots:
+        return RecalculateResponse(recalculated_count=0, last_ingest_at=None)
+
+    snapshot_ids = [s.id for s in snapshots]
+    account_ids = [s.monitored_account_id for s in snapshots]
+    accounts = db.query(MonitoredAccount).filter(MonitoredAccount.id.in_(account_ids)).all()
+    account_by_id = {a.id: a for a in accounts}
+
+    holdings_all = (
+        db.query(AccountSnapshotHolding)
+        .filter(AccountSnapshotHolding.account_snapshot_id.in_(snapshot_ids))
+        .all()
+    )
+    holdings_by_snapshot: dict = {}
+    for h in holdings_all:
+        sid = h.account_snapshot_id
+        if sid not in holdings_by_snapshot:
+            holdings_by_snapshot[sid] = []
+        holdings_by_snapshot[sid].append(h)
+
+    strategy_ids = list({a.internal_strategy_id for a in accounts if a.internal_strategy_id})
+    positions_by_strategy: dict = {}
+    pe_by_strategy: dict = {}
+    for sid in strategy_ids:
+        positions = db.query(StrategyPosition).filter(StrategyPosition.strategy_id == sid).all()
+        positions_data = [
+            {
+                "model_ticker": p.model_ticker,
+                "asset_class": p.asset_class.value if hasattr(p.asset_class, "value") else str(p.asset_class),
+                "target_allocation": float(p.target_allocation),
+            }
+            for p in positions
+        ]
+        positions_by_strategy[sid] = positions_data
+        pe_list = db.query(ProductEquivalent).filter(ProductEquivalent.strategy_id == sid).all()
+        pe_by_strategy[sid] = [
+            {"legacy_ticker": pe.legacy_ticker, "model_ticker": pe.model_ticker, "grade": pe.grade}
+            for pe in pe_list
+        ]
+
+    recalculated_count = 0
+    for snap in snapshots:
+        acc = account_by_id.get(snap.monitored_account_id)
+        if not acc or not acc.internal_strategy_id:
+            continue
+        positions_data = positions_by_strategy.get(acc.internal_strategy_id, [])
+        pe_data = pe_by_strategy.get(acc.internal_strategy_id, [])
+
+        holdings_raw = holdings_by_snapshot.get(snap.id, [])
+        non_cash = []
+        cash_value = Decimal("0")
+        for h in holdings_raw:
+            ticker = (h.ticker or "").strip().upper()
+            val = Decimal(str(h.value))
+            if ticker == "CASH":
+                cash_value += val
+            else:
+                non_cash.append({"ticker": h.ticker, "value": h.value})
+
+        actual_by_ac, deviation_score, purity_score, holdings_with_meta = compute_rollup_and_scores(
+            holdings=non_cash,
+            cash_value=cash_value,
+            positions=positions_data,
+            product_equivalents=pe_data,
+        )
+        total_val = snap.total_value
+        cash_pct = round(cash_value / total_val * Decimal("100"), 2) if total_val else None
+
+        db.query(AccountSnapshotHolding).filter(
+            AccountSnapshotHolding.account_snapshot_id == snap.id
+        ).delete()
+        snap.total_deviation_score = deviation_score
+        snap.purity_score = purity_score
+        snap.cash_pct = cash_pct
+        for h in holdings_with_meta:
+            db.add(AccountSnapshotHolding(
+                account_snapshot_id=snap.id,
+                ticker=h.get("ticker", ""),
+                asset_class=h.get("asset_class"),
+                value=Decimal(str(h.get("value", 0))),
+                weight_pct=Decimal(str(h.get("weight_pct", 0))) if h.get("weight_pct") is not None else None,
+                grade=h.get("grade"),
+            ))
+        recalculated_count += 1
+
+    ingest_run = MonitoringIngestRun(
+        ingested_count=recalculated_count,
+        as_of_date=snapshots[0].as_of_date if snapshots else None,
+        file_checksum=RECALCULATE_CHECKSUM,
+    )
+    db.add(ingest_run)
+    db.commit()
+    db.refresh(ingest_run)
+    logger.info("Monitoring recalculate: %s snapshots updated", recalculated_count)
+    return RecalculateResponse(
+        recalculated_count=recalculated_count,
+        last_ingest_at=ingest_run.ingested_at,
+    )
+
+
 @router.get("/last-ingest", response_model=LastIngestResponse)
 async def get_last_ingest(db: Session = Depends(get_db)):
     """Return when heat map data was last updated (from most recent ingest run)."""
@@ -499,13 +619,54 @@ async def list_monitored_accounts(
     if mapped_only:
         q = q.filter(MonitoredAccount.internal_strategy_id.isnot(None))
     accounts = q.all()
+    if not accounts:
+        return []
+
+    account_ids = [a.id for a in accounts]
+    strategy_ids = [a.internal_strategy_id for a in accounts if a.internal_strategy_id is not None]
+
+    if as_of_date is not None:
+        snapshots = (
+            db.query(AccountSnapshot)
+            .filter(
+                AccountSnapshot.monitored_account_id.in_(account_ids),
+                AccountSnapshot.as_of_date == as_of_date,
+            )
+            .all()
+        )
+    else:
+        subq = (
+            db.query(
+                AccountSnapshot.monitored_account_id,
+                func.max(AccountSnapshot.as_of_date).label("max_date"),
+            )
+            .group_by(AccountSnapshot.monitored_account_id)
+            .subquery()
+        )
+        snapshots = (
+            db.query(AccountSnapshot)
+            .join(
+                subq,
+                and_(
+                    AccountSnapshot.monitored_account_id == subq.c.monitored_account_id,
+                    AccountSnapshot.as_of_date == subq.c.max_date,
+                ),
+            )
+            .filter(AccountSnapshot.monitored_account_id.in_(account_ids))
+            .all()
+        )
+
+    snapshot_by_account = {s.monitored_account_id: s for s in snapshots}
+
+    strategy_by_id = {}
+    if strategy_ids:
+        strategies = db.query(Strategy).filter(Strategy.id.in_(strategy_ids)).all()
+        strategy_by_id = {s.id: s for s in strategies}
+
     result = []
     for acc in accounts:
-        q = db.query(AccountSnapshot).filter(AccountSnapshot.monitored_account_id == acc.id)
-        if as_of_date is not None:
-            q = q.filter(AccountSnapshot.as_of_date == as_of_date)
-        snapshot = q.order_by(AccountSnapshot.as_of_date.desc()).first()
-        strategy = db.query(Strategy).filter(Strategy.id == acc.internal_strategy_id).first()
+        snapshot = snapshot_by_account.get(acc.id)
+        strategy = strategy_by_id.get(acc.internal_strategy_id) if acc.internal_strategy_id else None
         result.append(MonitoredAccountListItem(
             id=acc.id,
             synthetic_id=acc.synthetic_id,
@@ -761,19 +922,18 @@ async def get_concentration_report(
         .all()
     )
     agg: dict = {}  # (ticker, grade) -> (total_value, set of account_ids)
+    asset_class_by_key: dict = {}  # (ticker, grade) -> asset_class
     for h, acc_id in holdings:
         key = (h.ticker.strip(), h.grade)
         if key not in agg:
             agg[key] = [Decimal("0"), set()]
         agg[key][0] += h.value
         agg[key][1].add(acc_id)
+        if key not in asset_class_by_key:
+            asset_class_by_key[key] = h.asset_class
     result = []
     for (ticker, grade), (total_value, account_ids) in agg.items():
-        ac = None
-        for h, _ in holdings:
-            if h.ticker.strip() == ticker and h.grade == grade:
-                ac = h.asset_class
-                break
+        ac = asset_class_by_key.get((ticker, grade))
         result.append(
             ConcentrationReportItem(
                 ticker=ticker,
@@ -848,34 +1008,57 @@ async def get_top_offenders(
     db: Session = Depends(get_db),
 ):
     """Ranked list of accounts holding the highest dollar volume of Grade 2 assets (lowest hanging fruit)."""
-    accounts = db.query(MonitoredAccount).all()
     snapshot_date = as_of_date or _get_latest_snapshot_date(db)
     if not snapshot_date:
         return []
+
+    snapshots = (
+        db.query(AccountSnapshot)
+        .filter(AccountSnapshot.as_of_date == snapshot_date)
+        .all()
+    )
+    if not snapshots:
+        return []
+
+    snapshot_by_account = {s.monitored_account_id: s for s in snapshots}
+    snapshot_ids = [s.id for s in snapshots]
+
+    grade2_totals = (
+        db.query(
+            AccountSnapshotHolding.account_snapshot_id,
+            func.coalesce(func.sum(AccountSnapshotHolding.value), 0).label("total"),
+        )
+        .filter(
+            AccountSnapshotHolding.account_snapshot_id.in_(snapshot_ids),
+            AccountSnapshotHolding.grade == 2,
+        )
+        .group_by(AccountSnapshotHolding.account_snapshot_id)
+        .all()
+    )
+    g2_by_snapshot = {row[0]: row[1] for row in grade2_totals if row[1] and float(row[1]) > 0}
+
+    account_ids = [s.monitored_account_id for s in snapshots if s.id in g2_by_snapshot]
+    if not account_ids:
+        return []
+
+    accounts = db.query(MonitoredAccount).filter(MonitoredAccount.id.in_(account_ids)).all()
+    account_by_id = {a.id: a for a in accounts}
+    strategy_ids = [a.internal_strategy_id for a in accounts if a.internal_strategy_id is not None]
+    strategy_by_id = {}
+    if strategy_ids:
+        strategies = db.query(Strategy).filter(Strategy.id.in_(strategy_ids)).all()
+        strategy_by_id = {s.id: s for s in strategies}
+
     result = []
-    for acc in accounts:
-        snap = (
-            db.query(AccountSnapshot)
-            .filter(
-                AccountSnapshot.monitored_account_id == acc.id,
-                AccountSnapshot.as_of_date == snapshot_date,
-            )
-            .first()
-        )
-        if not snap:
+    for acc_id in account_ids:
+        acc = account_by_id.get(acc_id)
+        if not acc:
             continue
-        grade2_value = (
-            db.query(AccountSnapshotHolding.value)
-            .filter(
-                AccountSnapshotHolding.account_snapshot_id == snap.id,
-                AccountSnapshotHolding.grade == 2,
-            )
-            .all()
-        )
-        total_g2 = sum(Decimal(str(v[0])) for v in grade2_value)
-        if total_g2 <= 0:
+        snap = snapshot_by_account.get(acc_id)
+        if not snap or snap.id not in g2_by_snapshot:
             continue
-        strategy = db.query(Strategy).filter(Strategy.id == acc.internal_strategy_id).first()
+        total_g2 = g2_by_snapshot[snap.id]
+        strategy = strategy_by_id.get(acc.internal_strategy_id) if acc.internal_strategy_id else None
         result.append(
             TopOffenderItem(
                 account_id=acc.id,
@@ -900,26 +1083,52 @@ async def get_unmapped_tickers(
     if not snapshot_date:
         return []
     snapshots = db.query(AccountSnapshot).filter(AccountSnapshot.as_of_date == snapshot_date).all()
-    # (ticker, strategy_id) -> total_value, we'll mark unmapped
+    if not snapshots:
+        return []
+
+    snapshot_ids = [s.id for s in snapshots]
+    account_ids = [s.monitored_account_id for s in snapshots]
+
+    accounts = db.query(MonitoredAccount).filter(MonitoredAccount.id.in_(account_ids)).all()
+    account_by_id = {a.id: a for a in accounts}
+
+    holdings = (
+        db.query(AccountSnapshotHolding)
+        .filter(
+            AccountSnapshotHolding.account_snapshot_id.in_(snapshot_ids),
+            AccountSnapshotHolding.ticker != "CASH",
+        )
+        .all()
+    )
+    snapshot_by_id = {s.id: s for s in snapshots}
+    holdings_by_snapshot: dict = {}
+    for h in holdings:
+        sid = h.account_snapshot_id
+        if sid not in holdings_by_snapshot:
+            holdings_by_snapshot[sid] = []
+        holdings_by_snapshot[sid].append(h)
+
+    strategy_ids = [a.internal_strategy_id for a in accounts if a.internal_strategy_id is not None]
+    pe_by_strategy: dict = {}
+    if strategy_ids:
+        product_equivalents = (
+            db.query(ProductEquivalent)
+            .filter(ProductEquivalent.strategy_id.in_(strategy_ids))
+            .all()
+        )
+        for pe in product_equivalents:
+            if pe.strategy_id not in pe_by_strategy:
+                pe_by_strategy[pe.strategy_id] = set()
+            pe_by_strategy[pe.strategy_id].add(pe.legacy_ticker.strip().lower())
+
     ticker_strategy_value: dict = {}
     for snap in snapshots:
-        acc = db.query(MonitoredAccount).filter(MonitoredAccount.id == snap.monitored_account_id).first()
+        acc = account_by_id.get(snap.monitored_account_id)
         if not acc:
             continue
         strategy_id = acc.internal_strategy_id
-        holdings = (
-            db.query(AccountSnapshotHolding)
-            .filter(
-                AccountSnapshotHolding.account_snapshot_id == snap.id,
-                AccountSnapshotHolding.ticker != "CASH",
-            )
-            .all()
-        )
-        pe_legacy = {
-            pe.legacy_ticker.strip().lower()
-            for pe in db.query(ProductEquivalent).filter(ProductEquivalent.strategy_id == strategy_id).all()
-        }
-        for h in holdings:
+        pe_legacy = pe_by_strategy.get(strategy_id, set()) if strategy_id else set()
+        for h in holdings_by_snapshot.get(snap.id, []):
             ticker = (h.ticker or "").strip()
             if not ticker:
                 continue
@@ -928,24 +1137,27 @@ async def get_unmapped_tickers(
                 if key not in ticker_strategy_value:
                     ticker_strategy_value[key] = Decimal("0")
                 ticker_strategy_value[key] += h.value
-    # Aggregate by ticker: total_value, list of strategy names
-    by_ticker: dict = {}  # ticker -> (total_value, set of strategy_ids)
+
+    by_ticker: dict = {}
     for (ticker, strategy_id), value in ticker_strategy_value.items():
         if ticker not in by_ticker:
             by_ticker[ticker] = [Decimal("0"), set()]
         by_ticker[ticker][0] += value
         by_ticker[ticker][1].add(strategy_id)
-    strategy_names = {
-        s.id: s.name
-        for s in db.query(Strategy).filter(Strategy.id.in_(list({sid for _, (_, sids) in by_ticker.items() for sid in sids}))).all()
-    }
+
+    all_strategy_ids = {sid for _, (_, sids) in by_ticker.items() for sid in sids}
+    strategy_names = {}
+    if all_strategy_ids:
+        strategies = db.query(Strategy).filter(Strategy.id.in_(list(all_strategy_ids))).all()
+        strategy_names = {s.id: s.name for s in strategies}
+
     result = [
         UnmappedTickerItem(
             ticker=ticker,
             total_value=total_value,
-            strategy_names=[strategy_names.get(sid, str(sid)) for sid in sorted(strategy_ids)],
+            strategy_names=[strategy_names.get(sid, str(sid)) for sid in sorted((s for s in sids if s is not None))],
         )
-        for ticker, (total_value, strategy_ids) in by_ticker.items()
+        for ticker, (total_value, sids) in by_ticker.items()
     ]
     result.sort(key=lambda x: (-float(x.total_value), x.ticker))
     return result
@@ -1000,6 +1212,37 @@ async def get_adviser_account_details(
         .all()
     )
     snapshot_by_account = {s.monitored_account_id: s for s in snapshots}
+    snapshot_ids = [s.id for s in snapshots]
+
+    holdings = (
+        db.query(AccountSnapshotHolding)
+        .filter(
+            AccountSnapshotHolding.account_snapshot_id.in_(snapshot_ids),
+            AccountSnapshotHolding.grade.in_([1, 2]),
+            AccountSnapshotHolding.ticker != "CASH",
+        )
+        .all()
+    )
+    holdings_by_snapshot: dict = {}
+    for h in holdings:
+        sid = h.account_snapshot_id
+        if sid not in holdings_by_snapshot:
+            holdings_by_snapshot[sid] = []
+        holdings_by_snapshot[sid].append(h)
+
+    strategy_ids = [a.internal_strategy_id for a in accounts if a.internal_strategy_id is not None]
+    pe_by_strategy: dict = {}
+    if strategy_ids:
+        product_equivalents = (
+            db.query(ProductEquivalent)
+            .filter(ProductEquivalent.strategy_id.in_(strategy_ids))
+            .all()
+        )
+        for pe in product_equivalents:
+            if pe.strategy_id not in pe_by_strategy:
+                pe_by_strategy[pe.strategy_id] = {}
+            key = pe.legacy_ticker.strip().lower()
+            pe_by_strategy[pe.strategy_id][key] = (pe.legacy_ticker.strip(), pe.model_ticker.strip())
 
     detail_rows: List[AdviserAccountDetailItem] = []
     legacy_value_by_ticker: dict = {}  # legacy_ticker -> (total_value, set of account_ids)
@@ -1011,25 +1254,9 @@ async def get_adviser_account_details(
             continue
         total_value = snap.total_value
         partial = (acc.account_display or (acc.synthetic_id[:8] + "…") if acc.synthetic_id else "") or "—"
-        holdings = (
-            db.query(AccountSnapshotHolding)
-            .filter(
-                AccountSnapshotHolding.account_snapshot_id == snap.id,
-                AccountSnapshotHolding.grade.in_([1, 2]),
-                AccountSnapshotHolding.ticker != "CASH",
-            )
-            .all()
-        )
-        pe_list = (
-            db.query(ProductEquivalent)
-            .filter(
-                ProductEquivalent.strategy_id == acc.internal_strategy_id,
-            )
-            .all()
-        )
-        legacy_to_model = {pe.legacy_ticker.strip().lower(): (pe.legacy_ticker.strip(), pe.model_ticker.strip()) for pe in pe_list}
+        legacy_to_model = pe_by_strategy.get(acc.internal_strategy_id, {}) if acc.internal_strategy_id else {}
 
-        for h in holdings:
+        for h in holdings_by_snapshot.get(snap.id, []):
             ticker = (h.ticker or "").strip()
             if not ticker:
                 continue
