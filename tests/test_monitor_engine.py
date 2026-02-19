@@ -41,8 +41,8 @@ def test_asset_class_rollup_cash_once():
     # US Large Core: 10000/35000 * 100; International: 20000/35000 * 100; CASH: 5000/35000 * 100
     assert "US Large Core" in actual_by_ac
     assert "International Developed" in actual_by_ac
-    assert "CASH" in actual_by_ac
-    assert actual_by_ac["CASH"] == round_to_precision(Decimal("5000") / 35000 * 100)
+    assert "Cash" in actual_by_ac
+    assert actual_by_ac["Cash"] == round_to_precision(Decimal("5000") / 35000 * 100)
     assert len(holdings_meta) == 3  # 2 holdings + 1 CASH row
 
 
@@ -91,8 +91,8 @@ def test_purity_score_grade0():
 
 def test_get_allocations_breakdown():
     """Breakdown returns actual_pct, target_pct, drift_pct per asset class."""
-    actual_by_ac = {"US Large Core": Decimal("60"), "CASH": Decimal("5")}
-    target_by_ac = {"US Large Core": Decimal("50"), "CASH": Decimal("5")}
+    actual_by_ac = {"US Large Core": Decimal("60"), "Cash": Decimal("5")}
+    target_by_ac = {"US Large Core": Decimal("50"), "Cash": Decimal("5")}
     out = get_allocations_breakdown(actual_by_ac, target_by_ac)
     assert len(out) >= 2
     us = next((x for x in out if x["asset_class"] == "US Large Core"), None)

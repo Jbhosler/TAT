@@ -16,7 +16,23 @@ CREATE TYPE asset_class_enum AS ENUM (
     'International Developed',
     'Emerging Markets',
     'Fixed Income',
-    'CASH'
+    'Emg Bond LC',
+    'Emg Bond Hedged',
+    'ST Corp',
+    'IT Corp',
+    'LT Corp',
+    'ST Govt',
+    'IT Govt',
+    'LT Govt',
+    'Tactical Cash',
+    'Ultra ST Bond',
+    'Aggregate',
+    'Mortgage Backed',
+    'Inflation Protection',
+    'ST High Yield',
+    'High Yield',
+    'Private Credit',
+    'Cash'
 );
 
 CREATE TYPE mapping_status_enum AS ENUM (

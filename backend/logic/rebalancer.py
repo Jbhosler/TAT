@@ -15,6 +15,7 @@ PRECISION = Decimal('0.001')
 
 class AssetClass(str, Enum):
     """Asset class enumeration."""
+    # Equity
     US_LARGE_CORE = "US Large Core"
     US_LARGE_GROWTH = "US Large Growth"
     US_LARGE_VALUE = "US Large Value"
@@ -23,8 +24,27 @@ class AssetClass(str, Enum):
     US_SMALL_CAP = "US Small Cap"
     INTERNATIONAL_DEVELOPED = "International Developed"
     EMERGING_MARKETS = "Emerging Markets"
+    # Fixed Income (legacy)
     FIXED_INCOME = "Fixed Income"
-    CASH = "CASH"
+    # Fixed Income subclasses
+    EMG_BOND_LC = "Emg Bond LC"
+    EMG_BOND_HEDGED = "Emg Bond Hedged"
+    ST_CORP = "ST Corp"
+    IT_CORP = "IT Corp"
+    LT_CORP = "LT Corp"
+    ST_GOVT = "ST Govt"
+    IT_GOVT = "IT Govt"
+    LT_GOVT = "LT Govt"
+    TACTICAL_CASH = "Tactical Cash"
+    ULTRA_ST_BOND = "Ultra ST Bond"
+    AGGREGATE = "Aggregate"
+    MORTGAGE_BACKED = "Mortgage Backed"
+    INFLATION_PROTECTION = "Inflation Protection"
+    ST_HIGH_YIELD = "ST High Yield"
+    HIGH_YIELD = "High Yield"
+    PRIVATE_CREDIT = "Private Credit"
+    # Cash
+    CASH = "Cash"
 
 
 @dataclass

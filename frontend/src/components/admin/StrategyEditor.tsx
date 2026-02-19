@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { strategiesAPI } from '../../services/api';
+import { strategiesAPI, adminAPI } from '../../services/api';
 
 interface Strategy {
   id: string;
@@ -30,6 +30,7 @@ function roundToTenthPct(n: number): number {
 
 const StrategyEditor = () => {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const [assetClasses, setAssetClasses] = useState<string[]>([]);
   const [selectedStrategy, setSelectedStrategy] = useState<Strategy | null>(null);
   const [strategyName, setStrategyName] = useState('');
   const [positions, setPositions] = useState<Position[]>([]);
@@ -38,6 +39,7 @@ const StrategyEditor = () => {
 
   useEffect(() => {
     loadStrategies();
+    adminAPI.getAssetClasses().then((r) => setAssetClasses(r.data || [])).catch(() => setAssetClasses([]));
   }, []);
 
   useEffect(() => {
@@ -178,7 +180,7 @@ const StrategyEditor = () => {
     }
   };
 
-  const assetClasses = [
+  const assetClassesFallback = assetClasses.length > 0 ? assetClasses : [
     'US Large Core',
     'US Large Growth',
     'US Large Value',
@@ -291,7 +293,7 @@ const StrategyEditor = () => {
                   value={pos.asset_class}
                   onChange={(e) => handlePositionChange(index, 'asset_class', e.target.value)}
                 >
-                  {assetClasses.map(ac => (
+                  {assetClassesFallback.map(ac => (
                     <option key={ac} value={ac}>{ac}</option>
                   ))}
                 </select>

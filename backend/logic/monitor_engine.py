@@ -116,14 +116,15 @@ def compute_rollup_and_scores(
         })
 
     if cash_value > 0:
-        if "CASH" not in value_by_ac:
-            value_by_ac["CASH"] = Decimal("0")
-        value_by_ac["CASH"] += cash_value
+        cash_ac = "Cash"
+        if cash_ac not in value_by_ac:
+            value_by_ac[cash_ac] = Decimal("0")
+        value_by_ac[cash_ac] += cash_value
         weight_pct_cash = round_to_precision((cash_value / total_value) * Decimal("100"))
         holdings_with_metadata.append({
             "ticker": "CASH",
             "value": cash_value,
-            "asset_class": "CASH",
+            "asset_class": cash_ac,
             "grade": 0,
             "weight_pct": float(weight_pct_cash),
         })
