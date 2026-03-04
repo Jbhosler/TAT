@@ -71,7 +71,7 @@ const ConcentrationReport = ({ refreshTrigger }: ConcentrationReportProps) => {
     <div className="space-y-8">
       <div className="flex justify-between items-center">
         <p className="text-sm text-gray-500">
-          Total exposure to non-model assets (Grade 1 & 2). Use latest snapshot or pick a date.
+          Total exposure to equivalent holdings (Grade 0, 1 & 2). Excludes model tickers held directly. Use latest snapshot or pick a date.
         </p>
         <div className="flex items-center gap-2">
           <label className="text-sm text-gray-600">As of date:</label>
@@ -98,7 +98,7 @@ const ConcentrationReport = ({ refreshTrigger }: ConcentrationReportProps) => {
           <div className="bg-white shadow rounded-lg p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-3">Concentration Report</h3>
             <p className="text-sm text-gray-500 mb-4">
-              Every Grade 1 and Grade 2 ticker in the latest snapshot with total dollar amount held across all advisors.
+              Every equivalent ticker (Grade 0, 1, 2) in the latest snapshot with total dollar amount held across all advisors. Excludes model tickers held directly.
             </p>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">

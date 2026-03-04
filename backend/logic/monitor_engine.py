@@ -21,23 +21,25 @@ def round_to_precision(value: Decimal) -> Decimal:
 def _build_pe_map(
     product_equivalents: List[Dict[str, Any]],
 ) -> Dict[str, Tuple[str, int]]:
-    """Build legacy_ticker -> (model_ticker, grade). First match wins if duplicates."""
+    """Build legacy_ticker (lowercase key) -> (model_ticker, grade). Case-insensitive lookup. First match wins if duplicates."""
     out = {}
     for pe in product_equivalents:
         legacy = (pe.get("legacy_ticker") or "").strip()
         if not legacy:
             continue
         model = (pe.get("model_ticker") or "").strip()
-        grade = int(pe.get("grade", 2))
-        if legacy not in out:
-            out[legacy] = (model, grade)
+        g = pe.get("grade")
+        grade = int(g) if g is not None else 2
+        key = legacy.lower()
+        if key not in out:
+            out[key] = (model, grade)
     return out
 
 
 def _build_positions_map(
     positions: List[Dict[str, Any]],
 ) -> Tuple[Dict[str, str], Dict[str, Decimal]]:
-    """Build model_ticker -> asset_class (str), and asset_class -> target_allocation."""
+    """Build model_ticker (uppercase key) -> asset_class, and asset_class -> target_allocation. Case-insensitive lookup."""
     model_to_ac = {}
     target_by_ac = {}
     for pos in positions:
@@ -49,7 +51,7 @@ def _build_positions_map(
             ac_str = getattr(ac, "value", str(ac))
         target = Decimal(str(pos.get("target_allocation", 0)))
         if model:
-            model_to_ac[model] = ac_str
+            model_to_ac[model.upper()] = ac_str
         if ac_str not in target_by_ac:
             target_by_ac[ac_str] = Decimal("0")
         target_by_ac[ac_str] = round_to_precision(target_by_ac[ac_str] + target)
@@ -91,13 +93,13 @@ def compute_rollup_and_scores(
         value = Decimal(str(h.get("value", 0)))
         if value <= 0:
             continue
-        model_ticker, grade = pe_map.get(ticker, (None, 2))
+        model_ticker, grade = pe_map.get(ticker.lower(), (None, 2))
         asset_class = None
-        if model_ticker and model_ticker in model_to_ac:
-            asset_class = model_to_ac[model_ticker]
-        elif ticker in model_to_ac:
+        if model_ticker and model_ticker.upper() in model_to_ac:
+            asset_class = model_to_ac[model_ticker.upper()]
+        elif ticker.upper() in model_to_ac:
             # Holding is itself a model ticker (no product equivalent row needed)
-            asset_class = model_to_ac[ticker]
+            asset_class = model_to_ac[ticker.upper()]
             grade = 0
         if asset_class is None:
             asset_class = "Other"

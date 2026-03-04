@@ -4,7 +4,7 @@ Monitoring module endpoints: strategy name mapping, ingest, accounts, snapshots.
 import hashlib
 import logging
 from datetime import date, datetime, timezone
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 from decimal import Decimal
 
@@ -41,6 +41,9 @@ from backend.api.models.schemas import (
     ConcentrationAccountItem,
     TopOffenderItem,
     UnmappedTickerItem,
+    UnusedEquivalentItem,
+    EquivalentUsageItem,
+    EquivalentAccountUsageItem,
     AdviserAccountDetailItem,
     LegacyTickerTotalItem,
     AdviserAccountDetailsResponse,
@@ -327,6 +330,37 @@ async def ingest_aggregated_holdings(
     data_inconsistency_synthetic_ids: List[str] = []
     as_of_date_used: Optional[date] = None
 
+    # Pre-load existing accounts by synthetic_id to avoid N queries in the loop
+    synthetic_ids = [g["synthetic_id"] for g in groups if not g.get("data_inconsistency")]
+    existing_accounts: Dict[str, MonitoredAccount] = {}
+    if synthetic_ids:
+        existing_accounts = {
+            a.synthetic_id: a
+            for a in db.query(MonitoredAccount).filter(MonitoredAccount.synthetic_id.in_(synthetic_ids)).all()
+        }
+
+    # Cache strategy positions and product equivalents by strategy_id (many accounts share strategies)
+    _positions_cache: Dict[UUID, List[Dict[str, Any]]] = {}
+    _pe_cache: Dict[UUID, List[Dict[str, Any]]] = {}
+
+    def _get_positions_and_pe(strategy_id: UUID):
+        if strategy_id not in _positions_cache:
+            positions = db.query(StrategyPosition).filter(StrategyPosition.strategy_id == strategy_id).all()
+            _positions_cache[strategy_id] = [
+                {
+                    "model_ticker": p.model_ticker,
+                    "asset_class": p.asset_class.value if hasattr(p.asset_class, "value") else str(p.asset_class),
+                    "target_allocation": float(p.target_allocation),
+                }
+                for p in positions
+            ]
+            pe_list = db.query(ProductEquivalent).filter(ProductEquivalent.strategy_id == strategy_id).all()
+            _pe_cache[strategy_id] = [
+                {"legacy_ticker": pe.legacy_ticker, "model_ticker": pe.model_ticker, "grade": pe.grade}
+                for pe in pe_list
+            ]
+        return _positions_cache[strategy_id], _pe_cache[strategy_id]
+
     for g in groups:
         if g.get("data_inconsistency"):
             data_inconsistency_synthetic_ids.append(g["synthetic_id"])
@@ -340,9 +374,7 @@ async def ingest_aggregated_holdings(
         advisor = (g.get("advisor") or "").strip() or None
         account_display = (g.get("account_display") or "").strip() or None
 
-        account = db.query(MonitoredAccount).filter(
-            MonitoredAccount.synthetic_id == g["synthetic_id"]
-        ).first()
+        account = existing_accounts.get(g["synthetic_id"])
         if not account:
             account = MonitoredAccount(
                 synthetic_id=g["synthetic_id"],
@@ -355,6 +387,7 @@ async def ingest_aggregated_holdings(
             )
             db.add(account)
             db.flush()
+            existing_accounts[g["synthetic_id"]] = account
         else:
             account.internal_strategy_id = internal_strategy_id
             account.external_model_name = external or None
@@ -363,25 +396,8 @@ async def ingest_aggregated_holdings(
             account.account_display = account_display
 
         if internal_strategy_id is not None:
-            # Mapped: full snapshot with rollup and holdings
-            positions = db.query(StrategyPosition).filter(
-                StrategyPosition.strategy_id == internal_strategy_id
-            ).all()
-            positions_data = [
-                {
-                    "model_ticker": p.model_ticker,
-                    "asset_class": p.asset_class.value if hasattr(p.asset_class, "value") else str(p.asset_class),
-                    "target_allocation": float(p.target_allocation),
-                }
-                for p in positions
-            ]
-            product_equivalents = db.query(ProductEquivalent).filter(
-                ProductEquivalent.strategy_id == internal_strategy_id
-            ).all()
-            pe_data = [
-                {"legacy_ticker": pe.legacy_ticker, "model_ticker": pe.model_ticker, "grade": pe.grade}
-                for pe in product_equivalents
-            ]
+            # Mapped: full snapshot with rollup and holdings (use cached positions/PE)
+            positions_data, pe_data = _get_positions_and_pe(internal_strategy_id)
 
             actual_by_ac, deviation_score, purity_score, holdings_with_meta = compute_rollup_and_scores(
                 holdings=g.get("holdings") or [],
@@ -428,7 +444,8 @@ async def ingest_aggregated_holdings(
                     grade=h.get("grade"),
                 ))
         else:
-            # Unmapped: save account and snapshot with value only, flag as Unmapped
+            # Unmapped: save account and snapshot with value only, flag as Unmapped.
+            # Also save raw holdings (ticker, value, weight_pct) so account view can show holdings/percentage.
             snapshot = db.query(AccountSnapshot).filter(
                 AccountSnapshot.monitored_account_id == account.id,
                 AccountSnapshot.as_of_date == as_of_date_used,
@@ -454,6 +471,27 @@ async def ingest_aggregated_holdings(
                 )
                 db.add(snapshot)
                 db.flush()
+
+            # Save raw holdings for unmapped accounts (holdings, value, percentage)
+            total_val = Decimal(str(g["total_value"]))
+            raw_holdings = list(g.get("holdings") or [])
+            cash_val = Decimal(str(g.get("cash_value", 0)))
+            if cash_val and cash_val > 0:
+                raw_holdings.append({"ticker": "CASH", "value": float(cash_val)})
+            for h in raw_holdings:
+                ticker = (h.get("ticker") or "").strip()
+                val = Decimal(str(h.get("value", 0)))
+                if not ticker:
+                    continue
+                weight_pct = round(val / total_val * Decimal("100"), 3) if total_val else None
+                db.add(AccountSnapshotHolding(
+                    account_snapshot_id=snapshot.id,
+                    ticker=ticker,
+                    asset_class=None,
+                    value=val,
+                    weight_pct=weight_pct,
+                    grade=None,
+                ))
         ingested_count += 1
 
     # Record this ingest run so we know when heat map data was last updated
@@ -1069,26 +1107,47 @@ async def get_concentration_report(
     as_of_date: Optional[date] = None,
     db: Session = Depends(get_db),
 ):
-    """List every Grade 1 and Grade 2 ticker in the latest (or given) snapshot with total $ held across all advisors."""
+    """List every Grade 0, 1, and 2 ticker (equivalents) in the latest snapshot. Excludes model tickers held directly (e.g. SPYM)."""
     snapshot_date = as_of_date or _get_latest_snapshot_date(db)
     if not snapshot_date:
         return []
     snapshots = db.query(AccountSnapshot).filter(AccountSnapshot.as_of_date == snapshot_date).all()
     snapshot_ids = [s.id for s in snapshots]
+    # Include grade 0, 1, 2 (Grade 0 equivalents like SPY->SPYM were previously excluded)
     holdings = (
         db.query(AccountSnapshotHolding, AccountSnapshot.monitored_account_id)
         .join(AccountSnapshot, AccountSnapshotHolding.account_snapshot_id == AccountSnapshot.id)
         .filter(
             AccountSnapshotHolding.account_snapshot_id.in_(snapshot_ids),
-            AccountSnapshotHolding.grade.in_([1, 2]),
+            AccountSnapshotHolding.grade.in_([0, 1, 2]),
             AccountSnapshotHolding.ticker != "CASH",
         )
         .all()
     )
+    # Build model_tickers per account: exclude holdings that ARE the model ticker (e.g. SPYM held directly)
+    account_ids = list({s.monitored_account_id for s in snapshots})
+    accounts = db.query(MonitoredAccount).filter(MonitoredAccount.id.in_(account_ids)).all()
+    strategy_ids = [a.internal_strategy_id for a in accounts if a.internal_strategy_id is not None]
+    model_tickers_by_strategy: dict = {}
+    if strategy_ids:
+        positions = db.query(StrategyPosition).filter(StrategyPosition.strategy_id.in_(strategy_ids)).all()
+        for p in positions:
+            sid = p.strategy_id
+            if sid not in model_tickers_by_strategy:
+                model_tickers_by_strategy[sid] = set()
+            model_tickers_by_strategy[sid].add((p.model_ticker or "").strip().upper())
+    account_to_strategy = {a.id: a.internal_strategy_id for a in accounts}
+
     agg: dict = {}  # (ticker, grade) -> (total_value, set of account_ids)
     asset_class_by_key: dict = {}  # (ticker, grade) -> asset_class
     for h, acc_id in holdings:
-        key = (h.ticker.strip(), h.grade)
+        strategy_id = account_to_strategy.get(acc_id)
+        model_tickers = model_tickers_by_strategy.get(strategy_id, set()) if strategy_id else set()
+        ticker_upper = (h.ticker or "").strip().upper()
+        if ticker_upper in model_tickers:
+            continue  # Exclude model tickers held directly (e.g. SPYM)
+        grade = h.grade if h.grade is not None else 2
+        key = (h.ticker.strip(), grade)
         if key not in agg:
             agg[key] = [Decimal("0"), set()]
         agg[key][0] += h.value
@@ -1118,9 +1177,9 @@ async def get_concentration_ticker_accounts(
     as_of_date: Optional[date] = None,
     db: Session = Depends(get_db),
 ):
-    """List accounts holding a given ticker at the given grade (1 or 2) with value and pct of total."""
-    if grade not in (1, 2):
-        raise HTTPException(status_code=400, detail="grade must be 1 or 2")
+    """List accounts holding a given ticker at the given grade (0, 1, or 2) with value and pct of account."""
+    if grade not in (0, 1, 2):
+        raise HTTPException(status_code=400, detail="grade must be 0, 1, or 2")
     snapshot_date = as_of_date or _get_latest_snapshot_date(db)
     if not snapshot_date:
         return []
@@ -1140,7 +1199,7 @@ async def get_concentration_ticker_accounts(
     )
     if not holdings:
         return []
-    total_value = sum(Decimal(str(h[0].value)) for h in holdings)
+    snapshot_by_id = {s.id: s for s in snapshots}
     account_by_id = {acc.id: acc for acc in db.query(MonitoredAccount).filter(
         MonitoredAccount.id.in_({h[1] for h in holdings})
     ).all()}
@@ -1152,7 +1211,9 @@ async def get_concentration_ticker_accounts(
         if not partial and acc:
             partial = (acc.synthetic_id or "")[:8] + "…"
         val = Decimal(str(h.value))
-        pct = (val / total_value * Decimal("100")).quantize(Decimal("0.01")) if total_value else Decimal("0")
+        snap = snapshot_by_id.get(h.account_snapshot_id)
+        account_total = Decimal(str(snap.total_value)) if snap and snap.total_value else Decimal("0")
+        pct = (val / account_total * Decimal("100")).quantize(Decimal("0.01")) if account_total else Decimal("0")
         result.append(
             ConcentrationAccountItem(
                 account_id=acc_id,
@@ -1242,7 +1303,7 @@ async def get_unmapped_tickers(
     as_of_date: Optional[date] = None,
     db: Session = Depends(get_db),
 ):
-    """Tickers in the latest (or given) snapshot that are not in any strategy's product equivalents library."""
+    """Tickers in the latest (or given) snapshot that are not in the model (strategy positions) or product equivalents library."""
     snapshot_date = as_of_date or _get_latest_snapshot_date(db)
     if not snapshot_date:
         return []
@@ -1273,43 +1334,53 @@ async def get_unmapped_tickers(
         holdings_by_snapshot[sid].append(h)
 
     strategy_ids = [a.internal_strategy_id for a in accounts if a.internal_strategy_id is not None]
-    pe_by_strategy: dict = {}
+    known_tickers_by_strategy: dict = {}
     if strategy_ids:
         product_equivalents = (
             db.query(ProductEquivalent)
             .filter(ProductEquivalent.strategy_id.in_(strategy_ids))
             .all()
         )
+        positions = db.query(StrategyPosition).filter(StrategyPosition.strategy_id.in_(strategy_ids)).all()
         for pe in product_equivalents:
-            if pe.strategy_id not in pe_by_strategy:
-                pe_by_strategy[pe.strategy_id] = set()
-            pe_by_strategy[pe.strategy_id].add(pe.legacy_ticker.strip().lower())
+            if pe.strategy_id not in known_tickers_by_strategy:
+                known_tickers_by_strategy[pe.strategy_id] = set()
+            known_tickers_by_strategy[pe.strategy_id].add(pe.legacy_ticker.strip().lower())
+        for pos in positions:
+            if pos.strategy_id not in known_tickers_by_strategy:
+                known_tickers_by_strategy[pos.strategy_id] = set()
+            known_tickers_by_strategy[pos.strategy_id].add(pos.model_ticker.strip().lower())
 
     ticker_strategy_value: dict = {}
+    ticker_account_ids: dict = {}
     for snap in snapshots:
         acc = account_by_id.get(snap.monitored_account_id)
         if not acc:
             continue
         strategy_id = acc.internal_strategy_id
-        pe_legacy = pe_by_strategy.get(strategy_id, set()) if strategy_id else set()
+        known = known_tickers_by_strategy.get(strategy_id, set()) if strategy_id else set()
         for h in holdings_by_snapshot.get(snap.id, []):
             ticker = (h.ticker or "").strip()
             if not ticker:
                 continue
-            if ticker.lower() not in pe_legacy:
+            if ticker.lower() not in known:
                 key = (ticker, strategy_id)
                 if key not in ticker_strategy_value:
                     ticker_strategy_value[key] = Decimal("0")
+                    ticker_account_ids[key] = set()
                 ticker_strategy_value[key] += h.value
+                ticker_account_ids[key].add(snap.monitored_account_id)
 
     by_ticker: dict = {}
     for (ticker, strategy_id), value in ticker_strategy_value.items():
+        account_ids = ticker_account_ids.get((ticker, strategy_id), set())
         if ticker not in by_ticker:
-            by_ticker[ticker] = [Decimal("0"), set()]
+            by_ticker[ticker] = [Decimal("0"), set(), set()]
         by_ticker[ticker][0] += value
         by_ticker[ticker][1].add(strategy_id)
+        by_ticker[ticker][2].update(account_ids)
 
-    all_strategy_ids = {sid for _, (_, sids) in by_ticker.items() for sid in sids}
+    all_strategy_ids = {sid for _, (_, sids, _) in by_ticker.items() for sid in sids}
     strategy_names = {}
     if all_strategy_ids:
         strategies = db.query(Strategy).filter(Strategy.id.in_(list(all_strategy_ids))).all()
@@ -1319,11 +1390,331 @@ async def get_unmapped_tickers(
         UnmappedTickerItem(
             ticker=ticker,
             total_value=total_value,
+            account_count=len(account_ids),
             strategy_names=[strategy_names.get(sid, str(sid)) for sid in sorted((s for s in sids if s is not None))],
         )
-        for ticker, (total_value, sids) in by_ticker.items()
+        for ticker, (total_value, sids, account_ids) in by_ticker.items()
     ]
     result.sort(key=lambda x: (-float(x.total_value), x.ticker))
+    return result
+
+
+@router.get("/unmapped-tickers/{ticker}/accounts", response_model=List[EquivalentAccountUsageItem])
+async def get_unmapped_ticker_accounts(
+    ticker: str,
+    as_of_date: Optional[date] = None,
+    db: Session = Depends(get_db),
+):
+    """Accounts holding this unmapped ticker (not in model or product equivalents), with value and pct of total."""
+    ticker_clean = (ticker or "").strip()
+    if not ticker_clean:
+        return []
+    snapshot_date = as_of_date or _get_latest_snapshot_date(db)
+    if not snapshot_date:
+        return []
+
+    snapshots = db.query(AccountSnapshot).filter(AccountSnapshot.as_of_date == snapshot_date).all()
+    if not snapshots:
+        return []
+
+    account_ids = [s.monitored_account_id for s in snapshots]
+    accounts = db.query(MonitoredAccount).filter(MonitoredAccount.id.in_(account_ids)).all()
+    account_by_id = {a.id: a for a in accounts}
+
+    strategy_ids = [a.internal_strategy_id for a in accounts if a.internal_strategy_id is not None]
+    known_tickers_by_strategy: dict = {}
+    if strategy_ids:
+        product_equivalents = (
+            db.query(ProductEquivalent)
+            .filter(ProductEquivalent.strategy_id.in_(strategy_ids))
+            .all()
+        )
+        positions = db.query(StrategyPosition).filter(StrategyPosition.strategy_id.in_(strategy_ids)).all()
+        for pe in product_equivalents:
+            if pe.strategy_id not in known_tickers_by_strategy:
+                known_tickers_by_strategy[pe.strategy_id] = set()
+            known_tickers_by_strategy[pe.strategy_id].add(pe.legacy_ticker.strip().lower())
+        for pos in positions:
+            if pos.strategy_id not in known_tickers_by_strategy:
+                known_tickers_by_strategy[pos.strategy_id] = set()
+            known_tickers_by_strategy[pos.strategy_id].add(pos.model_ticker.strip().lower())
+
+    holdings = (
+        db.query(AccountSnapshotHolding)
+        .filter(
+            AccountSnapshotHolding.account_snapshot_id.in_([s.id for s in snapshots]),
+            AccountSnapshotHolding.ticker != "CASH",
+            func.upper(AccountSnapshotHolding.ticker) == ticker_clean.upper(),
+        )
+        .all()
+    )
+    snapshot_by_id = {s.id: s for s in snapshots}
+    value_by_account: dict = {}
+    for h in holdings:
+        snap = snapshot_by_id.get(h.account_snapshot_id)
+        if not snap:
+            continue
+        acc = account_by_id.get(snap.monitored_account_id)
+        if not acc:
+            continue
+        strategy_id = acc.internal_strategy_id
+        known = known_tickers_by_strategy.get(strategy_id, set()) if strategy_id else set()
+        if ticker_clean.lower() in known:
+            continue
+        acc_id = snap.monitored_account_id
+        if acc_id not in value_by_account:
+            value_by_account[acc_id] = Decimal("0")
+        value_by_account[acc_id] += h.value
+
+    total_value = sum(value_by_account.values())
+    strategies = db.query(Strategy).filter(Strategy.id.in_(strategy_ids)).all() if strategy_ids else []
+    strategy_names = {s.id: s.name for s in strategies}
+
+    result = []
+    for acc_id, val in value_by_account.items():
+        acc = account_by_id.get(acc_id)
+        pct = (val / total_value * Decimal("100")).quantize(Decimal("0.01")) if total_value else Decimal("0")
+        result.append(
+            EquivalentAccountUsageItem(
+                account_id=acc_id,
+                partial_account_number=acc.account_display or (acc.synthetic_id[:8] + "…" if acc and acc.synthetic_id else None) if acc else None,
+                adviser=acc.advisor if acc else None,
+                strategy_name=strategy_names.get(acc.internal_strategy_id) if acc else None,
+                value=val,
+                pct_of_equivalent_total=pct,
+            )
+        )
+    result.sort(key=lambda x: (-float(x.value), x.adviser or "", x.partial_account_number or ""))
+    return result
+
+
+@router.get("/unused-equivalents", response_model=List[UnusedEquivalentItem])
+async def get_unused_equivalents(
+    as_of_date: Optional[date] = None,
+    db: Session = Depends(get_db),
+):
+    """Product equivalents that are set up but have no holdings in the latest (or given) snapshot."""
+    snapshot_date = as_of_date or _get_latest_snapshot_date(db)
+    if not snapshot_date:
+        # No snapshots: all equivalents are "unused"
+        pe_list = (
+            db.query(ProductEquivalent, Strategy)
+            .join(Strategy, ProductEquivalent.strategy_id == Strategy.id)
+            .all()
+        )
+        return [
+            UnusedEquivalentItem(
+                legacy_ticker=pe.legacy_ticker.strip(),
+                model_ticker=pe.model_ticker.strip(),
+                grade=pe.grade,
+                strategy_name=s.name,
+                strategy_id=pe.strategy_id,
+            )
+            for pe, s in pe_list
+        ]
+
+    snapshots = db.query(AccountSnapshot).filter(AccountSnapshot.as_of_date == snapshot_date).all()
+    snapshot_ids = [s.id for s in snapshots]
+    holdings = (
+        db.query(AccountSnapshotHolding.ticker)
+        .filter(
+            AccountSnapshotHolding.account_snapshot_id.in_(snapshot_ids),
+            AccountSnapshotHolding.ticker != "CASH",
+        )
+        .distinct()
+        .all()
+    )
+    held_tickers = {(h[0] or "").strip().upper() for h in holdings if h[0]}
+
+    pe_list = (
+        db.query(ProductEquivalent, Strategy)
+        .join(Strategy, ProductEquivalent.strategy_id == Strategy.id)
+        .all()
+    )
+    result = []
+    for pe, s in pe_list:
+        legacy_upper = (pe.legacy_ticker or "").strip().upper()
+        if legacy_upper not in held_tickers:
+            result.append(
+                UnusedEquivalentItem(
+                    legacy_ticker=pe.legacy_ticker.strip(),
+                    model_ticker=pe.model_ticker.strip(),
+                    grade=pe.grade,
+                    strategy_name=s.name,
+                    strategy_id=pe.strategy_id,
+                )
+            )
+    result.sort(key=lambda x: (x.strategy_name, x.legacy_ticker))
+    return result
+
+
+@router.get("/equivalents-usage", response_model=List[EquivalentUsageItem])
+async def get_equivalents_usage(
+    as_of_date: Optional[date] = None,
+    db: Session = Depends(get_db),
+):
+    """All product equivalents with full upload info and usage stats (total value, account count)."""
+    snapshot_date = as_of_date or _get_latest_snapshot_date(db)
+    pe_list = (
+        db.query(ProductEquivalent, Strategy)
+        .join(Strategy, ProductEquivalent.strategy_id == Strategy.id)
+        .all()
+    )
+    if not pe_list:
+        return []
+
+    result = []
+    if not snapshot_date:
+        for pe, s in pe_list:
+            result.append(
+                EquivalentUsageItem(
+                    id=pe.id,
+                    legacy_ticker=pe.legacy_ticker.strip(),
+                    model_ticker=pe.model_ticker.strip(),
+                    grade=pe.grade,
+                    buy_control=pe.buy_control,
+                    sell_control=pe.sell_control,
+                    custodian=pe.custodian,
+                    notes=pe.notes,
+                    description=pe.description,
+                    strategy_name=s.name,
+                    strategy_id=pe.strategy_id,
+                    total_value=Decimal("0"),
+                    account_count=0,
+                    is_unused=True,
+                )
+            )
+        result.sort(key=lambda x: (x.strategy_name, x.legacy_ticker))
+        return result
+
+    snapshots = db.query(AccountSnapshot).filter(AccountSnapshot.as_of_date == snapshot_date).all()
+    snapshot_ids = [s.id for s in snapshots]
+    snapshot_by_acc = {s.monitored_account_id: s for s in snapshots}
+    account_ids = list({s.monitored_account_id for s in snapshots})
+    accounts = db.query(MonitoredAccount).filter(MonitoredAccount.id.in_(account_ids)).all()
+    acc_to_strategy = {a.id: a.internal_strategy_id for a in accounts}
+    strategy_by_id = {s.id: s for s in db.query(Strategy).filter(Strategy.id.in_(acc_to_strategy.values())).all()}
+
+    holdings = (
+        db.query(
+            AccountSnapshotHolding.account_snapshot_id,
+            AccountSnapshotHolding.ticker,
+            AccountSnapshotHolding.value,
+        )
+        .filter(
+            AccountSnapshotHolding.account_snapshot_id.in_(snapshot_ids),
+            AccountSnapshotHolding.ticker != "CASH",
+        )
+        .all()
+    )
+    by_snapshot_ticker: dict = {}
+    for sid, ticker, val in holdings:
+        key = (sid, (ticker or "").strip().upper())
+        if key not in by_snapshot_ticker:
+            by_snapshot_ticker[key] = Decimal("0")
+        by_snapshot_ticker[key] += Decimal(str(val))
+
+    for pe, s in pe_list:
+        legacy_upper = (pe.legacy_ticker or "").strip().upper()
+        total_value = Decimal("0")
+        account_ids_holding = set()
+        for snap in snapshots:
+            if snap.monitored_account_id not in acc_to_strategy:
+                continue
+            if acc_to_strategy[snap.monitored_account_id] != pe.strategy_id:
+                continue
+            key = (snap.id, legacy_upper)
+            val = by_snapshot_ticker.get(key, Decimal("0"))
+            if val > 0:
+                total_value += val
+                account_ids_holding.add(snap.monitored_account_id)
+        result.append(
+            EquivalentUsageItem(
+                id=pe.id,
+                legacy_ticker=pe.legacy_ticker.strip(),
+                model_ticker=pe.model_ticker.strip(),
+                grade=pe.grade,
+                buy_control=pe.buy_control,
+                sell_control=pe.sell_control,
+                custodian=pe.custodian,
+                notes=pe.notes,
+                description=pe.description,
+                strategy_name=s.name,
+                strategy_id=pe.strategy_id,
+                total_value=total_value,
+                account_count=len(account_ids_holding),
+                is_unused=len(account_ids_holding) == 0,
+            )
+        )
+    result.sort(key=lambda x: (x.is_unused, -float(x.total_value), x.strategy_name, x.legacy_ticker))
+    return result
+
+
+@router.get("/equivalents-usage/{equivalent_id}/accounts", response_model=List[EquivalentAccountUsageItem])
+async def get_equivalent_accounts(
+    equivalent_id: UUID,
+    as_of_date: Optional[date] = None,
+    db: Session = Depends(get_db),
+):
+    """Accounts holding this equivalent with partial account number, adviser, strategy, value, and pct of total."""
+    pe = db.query(ProductEquivalent).filter(ProductEquivalent.id == equivalent_id).first()
+    if not pe:
+        raise HTTPException(status_code=404, detail="Product equivalent not found")
+    snapshot_date = as_of_date or _get_latest_snapshot_date(db)
+    if not snapshot_date:
+        return []
+
+    snapshots = (
+        db.query(AccountSnapshot)
+        .filter(AccountSnapshot.as_of_date == snapshot_date)
+        .all()
+    )
+    account_ids = [s.monitored_account_id for s in snapshots]
+    accounts = db.query(MonitoredAccount).filter(MonitoredAccount.id.in_(account_ids)).all()
+    acc_to_strategy = {a.id: a.internal_strategy_id for a in accounts}
+    strategy_by_id = {}
+    for sid in acc_to_strategy.values():
+        if sid and sid not in strategy_by_id:
+            strat = db.query(Strategy).filter(Strategy.id == sid).first()
+            if strat:
+                strategy_by_id[sid] = strat.name
+
+    legacy_upper = (pe.legacy_ticker or "").strip().upper()
+    total_value = Decimal("0")
+    rows: List[Tuple[UUID, Decimal]] = []
+    for snap in snapshots:
+        if acc_to_strategy.get(snap.monitored_account_id) != pe.strategy_id:
+            continue
+        val = (
+            db.query(func.coalesce(func.sum(AccountSnapshotHolding.value), 0))
+            .filter(
+                AccountSnapshotHolding.account_snapshot_id == snap.id,
+                func.upper(AccountSnapshotHolding.ticker) == legacy_upper,
+                AccountSnapshotHolding.ticker != "CASH",
+            )
+            .scalar()
+        )
+        val = Decimal(str(val or 0))
+        if val > 0:
+            total_value += val
+            rows.append((snap.monitored_account_id, val))
+
+    account_by_id = {a.id: a for a in accounts}
+    result = []
+    for acc_id, val in rows:
+        acc = account_by_id.get(acc_id)
+        pct = (val / total_value * Decimal("100")).quantize(Decimal("0.01")) if total_value else Decimal("0")
+        result.append(
+            EquivalentAccountUsageItem(
+                account_id=acc_id,
+                partial_account_number=acc.account_display or (acc.synthetic_id[:8] + "…" if acc and acc.synthetic_id else None) if acc else None,
+                adviser=acc.advisor if acc else None,
+                strategy_name=strategy_by_id.get(acc.internal_strategy_id) if acc else None,
+                value=val,
+                pct_of_equivalent_total=pct,
+            )
+        )
+    result.sort(key=lambda x: (-float(x.value), x.adviser or "", x.partial_account_number or ""))
     return result
 
 

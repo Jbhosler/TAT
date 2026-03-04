@@ -13,6 +13,7 @@ from backend.api.models.database import (
 from backend.api.models.schemas import (
     ProductEquivalentCreate,
     ProductEquivalentResponse,
+    ProductEquivalentUpdate,
     SanityCheckResponse,
     MultiMappingConflict,
     GradeInconsistencyConflict,
@@ -41,25 +42,68 @@ def _run_sanity_checks(
 
     strategies_by_id = {s.id: s for s in db.query(Strategy).all()}
 
-    # Build PE rows: either from DB or from override
+    # Build PE rows: use override where provided, else from DB.
+    # For preflight (one strategy in override): only load DB rows for legacy_tickers in the upload,
+    # so we don't scan all strategies. Otherwise load all PE in one query.
     pe_rows: List[Dict[str, Any]] = []
-    for strat_id, strat in strategies_by_id.items():
-        if strat_id in equivalents_override:
-            for row in equivalents_override[strat_id]:
+    override_strategy_ids = set(equivalents_override.keys())
+
+    if len(override_strategy_ids) == 1:
+        # Preflight: only load PE for legacy_tickers in the upload (multi-mapping/grade).
+        # Orphan check needs full PE for other strategies; we load that separately.
+        legacy_tickers = {r["legacy_ticker"] for rows in equivalents_override.values() for r in rows}
+        for strat_id, rows in equivalents_override.items():
+            for row in rows:
                 pe_rows.append({
                     "strategy_id": strat_id,
                     "legacy_ticker": row["legacy_ticker"],
                     "model_ticker": row["model_ticker"],
                     "grade": row["grade"],
                 })
-        else:
-            for pe in db.query(ProductEquivalent).filter(ProductEquivalent.strategy_id == strat_id).all():
+        if legacy_tickers:
+            other_pe_scoped = db.query(ProductEquivalent).filter(
+                ProductEquivalent.strategy_id.notin_(override_strategy_ids),
+                ProductEquivalent.legacy_ticker.in_(legacy_tickers),
+            ).all()
+            for pe in other_pe_scoped:
                 pe_rows.append({
                     "strategy_id": pe.strategy_id,
                     "legacy_ticker": pe.legacy_ticker,
                     "model_ticker": pe.model_ticker,
                     "grade": pe.grade,
                 })
+    else:
+        # Full sanity check or multi-strategy override: load all PE in one query
+        all_pe = db.query(ProductEquivalent).all()
+        for pe in all_pe:
+            if pe.strategy_id in equivalents_override:
+                continue  # use override instead
+            pe_rows.append({
+                "strategy_id": pe.strategy_id,
+                "legacy_ticker": pe.legacy_ticker,
+                "model_ticker": pe.model_ticker,
+                "grade": pe.grade,
+            })
+        for strat_id, rows in equivalents_override.items():
+            for row in rows:
+                pe_rows.append({
+                    "strategy_id": strat_id,
+                    "legacy_ticker": row["legacy_ticker"],
+                    "model_ticker": row["model_ticker"],
+                    "grade": row["grade"],
+                })
+
+    # Build pe_by_strat_model for orphaned check.
+    # Preflight: pe_rows has limited data; load full PE for other strategies for orphan check.
+    pe_by_strat_model = defaultdict(set)
+    for r in pe_rows:
+        pe_by_strat_model[(r["strategy_id"], r["model_ticker"])].add(r["grade"])
+    if len(override_strategy_ids) == 1:
+        other_pe = db.query(ProductEquivalent).filter(
+            ProductEquivalent.strategy_id.notin_(override_strategy_ids),
+        ).all()
+        for pe in other_pe:
+            pe_by_strat_model[(pe.strategy_id, pe.model_ticker)].add(pe.grade)
 
     # Multi-mapping: legacy_ticker mapped to different model tickers across strategies (conflict)
     # Same legacy -> same model ticker in multiple strategies is OK; different model tickers is a conflict
@@ -123,9 +167,6 @@ def _run_sanity_checks(
     # Orphaned model tickers: (strategy_id, model_ticker) in strategy_positions with no grade-0 in PE
     # Use DB for positions (override doesn't change strategy positions)
     position_rows = db.query(StrategyPosition).all()
-    pe_by_strat_model = defaultdict(set)
-    for r in pe_rows:
-        pe_by_strat_model[(r["strategy_id"], r["model_ticker"])].add(r["grade"])
 
     orphaned: List[OrphanedModelTicker] = []
     for pos in position_rows:
@@ -180,28 +221,45 @@ async def upload_product_equivalents(
 
     try:
         equivalents_data = parse_product_equivalents_csv(csv_content)
-        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    try:
+        # Build lookup of existing grades by (legacy_ticker, model_ticker) before delete
+        existing = db.query(ProductEquivalent).filter(
+            ProductEquivalent.strategy_id == strategy_id
+        ).all()
+        grade_lookup = {(pe.legacy_ticker, pe.model_ticker): pe.grade for pe in existing}
+
         # Delete existing equivalents
         db.query(ProductEquivalent).filter(
             ProductEquivalent.strategy_id == strategy_id
         ).delete()
-        
-        # Add new equivalents
+
+        # Add new equivalents, preserving grades when CSV has no grade and we had one
         for equiv_data in equivalents_data:
+            csv_grade = equiv_data.get('grade')
+            key = (equiv_data['legacy_ticker'], equiv_data['model_ticker'])
+            grade = csv_grade if csv_grade is not None else grade_lookup.get(key)
+
             db_equiv = ProductEquivalent(
                 strategy_id=strategy_id,
                 legacy_ticker=equiv_data['legacy_ticker'],
                 model_ticker=equiv_data['model_ticker'],
-                grade=equiv_data['grade']
+                grade=grade,
+                buy_control=equiv_data.get('buy_control'),
+                sell_control=equiv_data.get('sell_control'),
+                custodian=equiv_data.get('custodian'),
+                notes=equiv_data.get('notes'),
+                description=equiv_data.get('description'),
             )
             db.add(db_equiv)
-        
+
         db.commit()
-        
         return {"message": "Product equivalents uploaded successfully", "count": len(equivalents_data)}
-    
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 
 @router.delete("/product-equivalents/{strategy_id}/{equivalent_id}")
@@ -224,6 +282,35 @@ async def delete_product_equivalent(
     db.delete(pe)
     db.commit()
     return {"message": "Product equivalent deleted"}
+
+
+@router.patch("/product-equivalents/{strategy_id}/{equivalent_id}", response_model=ProductEquivalentResponse)
+async def update_product_equivalent(
+    strategy_id: UUID,
+    equivalent_id: UUID,
+    body: ProductEquivalentUpdate,
+    db: Session = Depends(get_db),
+):
+    """Update a product equivalent (e.g. grade). Grade is stored in the app, not from CSV."""
+    pe = (
+        db.query(ProductEquivalent)
+        .filter(
+            ProductEquivalent.id == equivalent_id,
+            ProductEquivalent.strategy_id == strategy_id,
+        )
+        .first()
+    )
+    if not pe:
+        raise HTTPException(status_code=404, detail="Product equivalent not found")
+    if body.grade is not None:
+        pe.grade = body.grade
+    try:
+        db.commit()
+        db.refresh(pe)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to save grade: {str(e)}")
+    return ProductEquivalentResponse.model_validate(pe)
 
 
 @router.get("/sanity-check", response_model=SanityCheckResponse)

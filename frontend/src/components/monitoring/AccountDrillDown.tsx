@@ -168,46 +168,96 @@ const AccountDrillDown = () => {
 
       {snap && (
         <>
-          <div className="bg-white shadow rounded-lg p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Actual vs Target (as of {new Date(snap.snapshot.as_of_date).toLocaleDateString('en-US')})</h3>
-            <div className="space-y-3">
-              {(snap.allocations || []).map((a) => (
-                <div key={a.asset_class} className="flex items-center gap-4">
-                  <span className="w-40 text-sm font-medium text-gray-700">{a.asset_class}</span>
-                  <div className="flex-1 flex gap-2 items-center">
-                    <div className="flex-1 h-6 bg-gray-100 rounded overflow-hidden flex">
-                      <div
-                        className="bg-amber-400"
-                        style={{ width: `${Math.min(100, Number(a.actual_pct))}%` }}
-                        title={`Actual ${formatPct(a.actual_pct)}`}
-                      />
-                      <div
-                        className="bg-indigo-200 border-l border-indigo-400"
-                        style={{ width: `${Math.min(100, Number(a.target_pct))}%` }}
-                        title={`Target ${formatPct(a.target_pct)}`}
-                      />
+          {(snap.allocations || []).length > 0 && (
+            <div className="bg-white shadow rounded-lg p-6">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Actual vs Target (as of {new Date(snap.snapshot.as_of_date).toLocaleDateString('en-US')})</h3>
+              <div className="space-y-3">
+                {(snap.allocations || []).map((a) => (
+                  <div key={a.asset_class} className="flex items-center gap-4">
+                    <span className="w-40 text-sm font-medium text-gray-700">{a.asset_class}</span>
+                    <div className="flex-1 flex gap-2 items-center">
+                      <div className="flex-1 h-6 bg-gray-100 rounded overflow-hidden flex">
+                        <div
+                          className="bg-amber-400"
+                          style={{ width: `${Math.min(100, Number(a.actual_pct))}%` }}
+                          title={`Actual ${formatPct(a.actual_pct)}`}
+                        />
+                        <div
+                          className="bg-indigo-200 border-l border-indigo-400"
+                          style={{ width: `${Math.min(100, Number(a.target_pct))}%` }}
+                          title={`Target ${formatPct(a.target_pct)}`}
+                        />
+                      </div>
+                      <span className="text-xs text-gray-500 w-24">
+                        Actual {formatPct(a.actual_pct)} / Target {formatPct(a.target_pct)}
+                      </span>
                     </div>
-                    <span className="text-xs text-gray-500 w-24">
-                      Actual {formatPct(a.actual_pct)} / Target {formatPct(a.target_pct)}
+                    <span className={`text-sm w-16 ${Number(a.drift_pct) >= 0 ? 'text-amber-600' : 'text-gray-600'}`}>
+                      Drift {formatPct(a.drift_pct)}
                     </span>
                   </div>
-                  <span className={`text-sm w-16 ${Number(a.drift_pct) >= 0 ? 'text-amber-600' : 'text-gray-600'}`}>
-                    Drift {formatPct(a.drift_pct)}
-                  </span>
-                </div>
-              ))}
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 mt-2">Bar: amber = actual %, indigo = target %</p>
             </div>
-            <p className="text-xs text-gray-500 mt-2">Bar: amber = actual %, indigo = target %</p>
-          </div>
+          )}
 
           <div className="bg-white shadow rounded-lg p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Holdings by asset class</h3>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              {(snap.allocations || []).length > 0 ? 'Holdings by asset class' : 'Holdings'}
+            </h3>
             <p className="text-sm text-gray-500 mb-4">
-              Holdings grouped by asset class with subtotals and model target comparison (as of {new Date(snap.snapshot.as_of_date).toLocaleDateString('en-US')}).
+              {(snap.allocations || []).length > 0
+                ? `Holdings grouped by asset class with subtotals and model target comparison (as of ${new Date(snap.snapshot.as_of_date).toLocaleDateString('en-US')}).`
+                : `Holdings with value and percentage (as of ${new Date(snap.snapshot.as_of_date).toLocaleDateString('en-US')}). This strategy is not yet mapped for target comparison.`}
             </p>
             {(() => {
               const holdings = snap.snapshot.holdings || [];
               const totalValue = Number(snap.snapshot.total_value) || 0;
+              const isUnmapped = (snap.allocations || []).length === 0;
+
+              if (holdings.length === 0) {
+                return <p className="text-sm text-gray-500">No holdings in this snapshot.</p>;
+              }
+
+              if (isUnmapped) {
+                return (
+                  <>
+                    <div className="mb-4">
+                      <span className="text-sm font-medium text-gray-700">Total value: </span>
+                      <span className="text-lg font-semibold text-gray-900">${formatDollars(totalValue)}</span>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Ticker</th>
+                            <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Value</th>
+                            <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Weight %</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {holdings.map((h, i) => (
+                            <tr key={i}>
+                              <td className="px-4 py-2 text-sm text-gray-900">{h.ticker}</td>
+                              <td className="px-4 py-2 text-sm text-right">${formatDollars(h.value)}</td>
+                              <td className="px-4 py-2 text-sm text-right">
+                                {h.weight_pct != null ? formatPct(h.weight_pct) : totalValue > 0 ? formatPct((Number(h.value) / totalValue) * 100) : '—'}
+                              </td>
+                            </tr>
+                          ))}
+                          <tr className="bg-gray-50 font-medium">
+                            <td className="px-4 py-2 text-sm text-gray-900">Total</td>
+                            <td className="px-4 py-2 text-sm text-right">${formatDollars(totalValue)}</td>
+                            <td className="px-4 py-2 text-sm text-right">100.00%</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                );
+              }
+
               const allocationsByAc = new Map((snap.allocations || []).map((a) => [a.asset_class, a]));
               const byAssetClass = new Map<string, typeof holdings>();
               for (const h of holdings) {
@@ -218,10 +268,6 @@ const AccountDrillDown = () => {
               const allocationOrder = (snap.allocations || []).map((a) => a.asset_class);
               const otherAcs = [...byAssetClass.keys()].filter((ac) => !allocationOrder.includes(ac));
               const orderedAcs = [...allocationOrder.filter((ac) => byAssetClass.has(ac)), ...otherAcs];
-
-              if (orderedAcs.length === 0) {
-                return <p className="text-sm text-gray-500">No holdings in this snapshot.</p>;
-              }
 
               return (
                 <div className="space-y-6">

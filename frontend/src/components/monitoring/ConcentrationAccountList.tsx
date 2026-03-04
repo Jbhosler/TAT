@@ -21,7 +21,7 @@ const ConcentrationAccountList = () => {
   useEffect(() => {
     if (!ticker || !grade) return;
     const gradeNum = parseInt(grade, 10);
-    if (Number.isNaN(gradeNum) || (gradeNum !== 1 && gradeNum !== 2)) {
+    if (Number.isNaN(gradeNum) || (gradeNum !== 0 && gradeNum !== 1 && gradeNum !== 2)) {
       setError('Invalid grade');
       setLoading(false);
       return;
@@ -86,8 +86,9 @@ const ConcentrationAccountList = () => {
                 <tr>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Adviser</th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Partial account number</th>
+                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Grade</th>
                   <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Value</th>
-                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">% of total</th>
+                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">% of account</th>
                   <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
                 </tr>
               </thead>
@@ -96,6 +97,7 @@ const ConcentrationAccountList = () => {
                   <tr key={row.account_id}>
                     <td className="px-4 py-2 text-sm text-gray-900">{row.adviser ?? '—'}</td>
                     <td className="px-4 py-2 text-sm text-gray-700">{row.partial_account_number ?? '—'}</td>
+                    <td className="px-4 py-2 text-sm text-center text-gray-700">{gradeNum}</td>
                     <td className="px-4 py-2 text-sm text-right text-gray-900">${formatDollars(row.value)}</td>
                     <td className="px-4 py-2 text-sm text-right text-gray-700">{Number(row.pct_of_total).toFixed(2)}%</td>
                     <td className="px-4 py-2 text-sm text-right">

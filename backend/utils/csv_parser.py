@@ -153,42 +153,69 @@ def _get_column_optional(row: dict, possible_names: list, default: str = "") -> 
     return default
 
 
+def _detect_csv_delimiter(first_line: str) -> str:
+    """Use semicolon if it appears more than comma in header (Excel locale)."""
+    if not first_line:
+        return ","
+    comma_count = first_line.count(",")
+    semicolon_count = first_line.count(";")
+    return ";" if semicolon_count > comma_count else ","
+
+
 def parse_product_equivalents_csv(csv_content: str) -> List[Dict[str, Any]]:
     """
-    Parse GE_Alt.csv (Product Equivalents).
-    Format: Legacy Ticker, Model Ticker, Grade (headers flexible: case-insensitive, BOM stripped)
+    Parse Product Equivalents CSV.
+    Format: Ticker, Alternate, Buy Control, Sell Control, Custodian, Notes, Description.
+    Optional: Legacy Ticker, Model Ticker (alternate mapping). Grade is optional; NULL = set in app.
+    Supports comma or semicolon delimiter (Excel locale).
     
-    Args:
-        csv_content: CSV file content as string
-        
-    Returns:
-        List of product equivalent dictionaries
+    Column mapping:
+    - Ticker or Model Ticker -> model_ticker
+    - Alternate or Legacy Ticker -> legacy_ticker
+    - Buy Control, Sell Control, Custodian, Notes, Description -> stored as-is
     """
     csv_content = (csv_content or "").strip().strip("\ufeff")
     if not csv_content:
         return []
 
-    reader = csv.DictReader(io.StringIO(csv_content))
+    lines = csv_content.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    delimiter = _detect_csv_delimiter(lines[0] if lines else "")
+    reader = csv.DictReader(io.StringIO(csv_content), delimiter=delimiter)
     equivalents = []
 
     for row in reader:
         if not any(v and str(v).strip() for v in row.values()):
             continue
-        legacy_ticker = _get_column(row, ["Legacy Ticker", "legacy_ticker"])
-        model_ticker = _get_column(row, ["Model Ticker", "model_ticker"])
-        grade_str = _get_column(row, ["Grade", "grade"])
-        if not grade_str:
-            raise ValueError("Grade is required for each row.")
-        try:
-            grade = int(grade_str)
-        except ValueError:
-            raise ValueError(f"Grade must be a number (0, 1, or 2). Got: {grade_str!r}")
-        if grade not in [0, 1, 2]:
-            raise ValueError(f"Invalid grade: {grade}. Must be 0, 1, or 2.")
+        # Ticker = model ticker (strategy position), Alternate = legacy ticker (equivalent)
+        # Also support Legacy Ticker / Model Ticker format
+        model_ticker = _get_column_optional(row, ["Ticker", "Model Ticker", "model_ticker"])
+        legacy_ticker = _get_column_optional(row, ["Alternate", "Legacy Ticker", "legacy_ticker"])
+        if not model_ticker or not legacy_ticker:
+            raise KeyError("Both Ticker (or Model Ticker) and Alternate (or Legacy Ticker) are required.")
+        buy_control = _get_column_optional(row, ["Buy Control", "buy_control"])
+        sell_control = _get_column_optional(row, ["Sell Control", "sell_control"])
+        custodian = _get_column_optional(row, ["Custodian", "custodian"])
+        notes = _get_column_optional(row, ["Notes", "notes"])
+        description = _get_column_optional(row, ["Description", "description"])
+        grade_str = _get_column_optional(row, ["Grade", "grade"])
+        if grade_str:
+            try:
+                grade = int(grade_str)
+            except ValueError:
+                raise ValueError(f"Grade must be a number (0, 1, or 2). Got: {grade_str!r}")
+            if grade not in [0, 1, 2]:
+                raise ValueError(f"Invalid grade: {grade}. Must be 0, 1, or 2.")
+        else:
+            grade = None  # User sets grade in app
         equivalents.append({
             "legacy_ticker": legacy_ticker,
             "model_ticker": model_ticker,
             "grade": grade,
+            "buy_control": buy_control or None,
+            "sell_control": sell_control or None,
+            "custodian": custodian or None,
+            "notes": notes or None,
+            "description": description or None,
         })
 
     return equivalents

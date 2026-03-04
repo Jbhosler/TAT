@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { strategiesAPI } from '../../services/api';
 import StrategyEditor from './StrategyEditor';
 import StrategyBridge from '../monitoring/StrategyBridge';
 import BulkUpload from './BulkUpload';
@@ -8,8 +9,23 @@ import ProductEquivalents from './ProductEquivalents';
 import DataIntegrity from './DataIntegrity';
 import AggregatedHoldingsUpload from './AggregatedHoldingsUpload';
 
+type Strategy = { id: string; name: string };
+
 const AdminPanel = () => {
   const [activeTab, setActiveTab] = useState<'editor' | 'bridge' | 'upload' | 'mapper' | 'equivalents' | 'integrity' | 'holdings'>('editor');
+  const [strategies, setStrategies] = useState<Strategy[]>([]);
+
+  useEffect(() => {
+    strategiesAPI.list()
+      .then((r) => {
+        const data = r?.data;
+        setStrategies(Array.isArray(data) ? data : (data?.data ?? []));
+      })
+      .catch((err) => {
+        console.error('AdminPanel: failed to load strategies', err);
+        setStrategies([]);
+      });
+  }, []);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -134,7 +150,19 @@ const AdminPanel = () => {
             {activeTab === 'bridge' && <StrategyBridge />}
             {activeTab === 'upload' && <BulkUpload />}
             {activeTab === 'mapper' && <AssetClassMapper />}
-            {activeTab === 'equivalents' && <ProductEquivalents />}
+            {activeTab === 'equivalents' && (
+              <ProductEquivalents
+                strategies={strategies}
+                onStrategiesRefresh={() =>
+                  strategiesAPI.list()
+                    .then((r) => {
+                      const data = r?.data;
+                      setStrategies(Array.isArray(data) ? data : (data?.data ?? []));
+                    })
+                    .catch(() => setStrategies([]))
+                }
+              />
+            )}
             {activeTab === 'integrity' && <DataIntegrity />}
             {activeTab === 'holdings' && <AggregatedHoldingsUpload />}
           </div>

@@ -366,7 +366,7 @@ async def calculate_transition(
     for pe in product_equivalents_db:
         if pe.legacy_ticker not in product_equivalents:
             product_equivalents[pe.legacy_ticker] = {}
-        product_equivalents[pe.legacy_ticker][pe.model_ticker] = pe.grade
+        product_equivalents[pe.legacy_ticker][pe.model_ticker] = pe.grade if pe.grade is not None else 2
     
     # Get manual mappings
     manual_mappings_db = db.query(TickerMapping).filter(

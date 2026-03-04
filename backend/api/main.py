@@ -28,18 +28,44 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Allowed origins for CORS - add production frontend domains
+ALLOWED_ORIGINS = {
+    "https://auourinvest.com",
+    "https://www.auourinvest.com",
+    "https://storage.googleapis.com",  # Cloud Storage hosting
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:3000",
+}
+
+
+def _cors_origin(request: Request) -> str:
+    """Return Access-Control-Allow-Origin value: reflect request origin if allowed, else *."""
+    origin = request.headers.get("origin", "").strip()
+    if not origin:
+        return "*"
+    if origin in ALLOWED_ORIGINS:
+        return origin
+    # Allow subdomains of auourinvest.com
+    if origin.endswith(".auourinvest.com") or origin == "https://auourinvest.com":
+        return origin
+    return "*"
+
+
 # Add explicit CORS handler FIRST (middleware runs in reverse order)
 # This ensures CORS headers are added to ALL responses
 @app.middleware("http")
 async def cors_handler(request: Request, call_next):
     """Handle CORS for all requests - runs FIRST."""
     origin = request.headers.get("origin", "unknown")
-    logger.info(f"CORS handler: {request.method} {request.url.path} from origin: {origin}")
+    allow_origin = _cors_origin(request)
+    logger.info(f"CORS handler: {request.method} {request.url.path} from origin: {origin} -> allow: {allow_origin}")
     
     if request.method == "OPTIONS":
         logger.info(f"OPTIONS preflight intercepted for {request.url.path}")
         response = Response(status_code=200)
-        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Origin"] = allow_origin
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
         response.headers["Access-Control-Allow-Headers"] = "*"
         response.headers["Access-Control-Max-Age"] = "3600"
@@ -49,7 +75,7 @@ async def cors_handler(request: Request, call_next):
     # For all other requests, add CORS headers to response
     try:
         response = await call_next(request)
-        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Origin"] = allow_origin
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
         response.headers["Access-Control-Allow-Headers"] = "*"
         logger.info(f"CORS headers added to {request.method} response for {request.url.path}")
@@ -62,7 +88,7 @@ async def cors_handler(request: Request, call_next):
             content='{"detail": "Internal server error"}',
             media_type="application/json"
         )
-        error_response.headers["Access-Control-Allow-Origin"] = "*"
+        error_response.headers["Access-Control-Allow-Origin"] = allow_origin
         error_response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
         error_response.headers["Access-Control-Allow-Headers"] = "*"
         return error_response

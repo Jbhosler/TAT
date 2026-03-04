@@ -3,8 +3,7 @@
  */
 import axios from 'axios';
 
-// In production, use Cloud Run backend URL. For local dev, use localhost.
-// Set VITE_API_URL when building if your backend is at a different URL.
+// Production: Cloud Run backend. Set VITE_API_URL when building to override.
 const API_BASE_URL = import.meta.env.VITE_API_URL ||
   (import.meta.env.PROD
     ? 'https://tat-backend-vzkn2vygsa-uc.a.run.app'
@@ -100,11 +99,14 @@ export const adminAPI = {
   getProductEquivalents: (strategyId: string) =>
     api.get(`/api/admin/product-equivalents/${strategyId}`),
   uploadProductEquivalents: (strategyId: string, csvContent: string) =>
-    api.post(`/api/admin/product-equivalents/${strategyId}`, csvContent, {
-      headers: { 'Content-Type': 'text/csv' },
+    api.post(`/api/admin/product-equivalents/${strategyId}`, new Blob([csvContent], { type: 'text/csv; charset=utf-8' }), {
+      headers: { 'Content-Type': 'text/csv; charset=utf-8' },
+      transformRequest: [(data) => data],
     }),
   deleteProductEquivalent: (strategyId: string, equivalentId: string) =>
     api.delete(`/api/admin/product-equivalents/${strategyId}/${equivalentId}`),
+  updateProductEquivalentGrade: (strategyId: string, equivalentId: string, grade: number) =>
+    api.patch(`/api/admin/product-equivalents/${strategyId}/${equivalentId}`, { grade }),
   getSanityCheck: () => api.get('/api/admin/sanity-check'),
   sanityCheckPreflight: (strategyId: string, csvContent: string) =>
     api.post('/api/admin/sanity-check/preflight', { strategy_id: strategyId, csv_content: csvContent }),
@@ -186,6 +188,43 @@ export const monitoringAPI = {
     api.get('/api/monitoring/top-offenders', { params }),
   unmappedTickers: (params?: { as_of_date?: string }) =>
     api.get('/api/monitoring/unmapped-tickers', { params }),
+  unmappedTickerAccounts: (ticker: string, params?: { as_of_date?: string }) =>
+    api.get<Array<{
+      account_id: string;
+      partial_account_number: string | null;
+      adviser: string | null;
+      strategy_name: string | null;
+      value: number;
+      pct_of_equivalent_total: number;
+    }>>(`/api/monitoring/unmapped-tickers/${encodeURIComponent(ticker)}/accounts`, { params }),
+  unusedEquivalents: (params?: { as_of_date?: string }) =>
+    api.get<Array<{ legacy_ticker: string; model_ticker: string; grade: number | null; strategy_name: string; strategy_id: string }>>('/api/monitoring/unused-equivalents', { params }),
+  equivalentsUsage: (params?: { as_of_date?: string }) =>
+    api.get<Array<{
+      id: string;
+      legacy_ticker: string;
+      model_ticker: string;
+      grade: number | null;
+      buy_control: string | null;
+      sell_control: string | null;
+      custodian: string | null;
+      notes: string | null;
+      description: string | null;
+      strategy_name: string;
+      strategy_id: string;
+      total_value: number;
+      account_count: number;
+      is_unused: boolean;
+    }>>('/api/monitoring/equivalents-usage', { params }),
+  equivalentAccounts: (equivalentId: string, params?: { as_of_date?: string }) =>
+    api.get<Array<{
+      account_id: string;
+      partial_account_number: string | null;
+      adviser: string | null;
+      strategy_name: string | null;
+      value: number;
+      pct_of_equivalent_total: number;
+    }>>(`/api/monitoring/equivalents-usage/${equivalentId}/accounts`, { params }),
   listAdvisers: () => api.get<string[]>('/api/monitoring/advisers'),
   getAdviserAccounts: (adviser: string, params?: { as_of_date?: string }) =>
     api.get<{ accounts: Array<{ account_id: string; partial_account_number: string | null; account_value: number; legacy_ticker: string; model_ticker: string }>; legacy_totals: Array<{ legacy_ticker: string; total_value: number; account_count: number }> }>('/api/monitoring/adviser-accounts', { params: { adviser, ...params } }),

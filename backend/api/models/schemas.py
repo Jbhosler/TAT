@@ -81,9 +81,19 @@ class ProductEquivalentResponse(BaseModel):
     strategy_id: UUID
     legacy_ticker: str
     model_ticker: str
-    grade: int
+    grade: Optional[int] = None  # None = needs grade in app
+    buy_control: Optional[str] = None
+    sell_control: Optional[str] = None
+    custodian: Optional[str] = None
+    notes: Optional[str] = None
+    description: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+
+class ProductEquivalentUpdate(BaseModel):
+    """Update product equivalent (grade is stored in app, editable per row)."""
+    grade: Optional[int] = Field(None, ge=0, le=2)  # None to clear; 0,1,2 to set
 
 
 # Sanity Check (Data Integrity) Schemas
@@ -435,7 +445,7 @@ class ConcentrationAccountItem(BaseModel):
     adviser: Optional[str] = None
     partial_account_number: Optional[str] = None
     value: Decimal
-    pct_of_total: Decimal
+    pct_of_total: Decimal  # % of this ticker within the account's total value
 
 
 class TopOffenderItem(BaseModel):
@@ -452,7 +462,45 @@ class UnmappedTickerItem(BaseModel):
     """Ticker in vendor data that is not in product equivalents library."""
     ticker: str
     total_value: Decimal
+    account_count: int = 0
     strategy_names: List[str] = []  # Strategies where this ticker appears but is unmapped
+
+
+class UnusedEquivalentItem(BaseModel):
+    """Product equivalent set up but with no holdings in the latest snapshot."""
+    legacy_ticker: str
+    model_ticker: str
+    grade: Optional[int] = None
+    strategy_name: str
+    strategy_id: UUID
+
+
+class EquivalentUsageItem(BaseModel):
+    """Product equivalent with full upload info and usage stats."""
+    id: UUID
+    legacy_ticker: str
+    model_ticker: str
+    grade: Optional[int] = None
+    buy_control: Optional[str] = None
+    sell_control: Optional[str] = None
+    custodian: Optional[str] = None
+    notes: Optional[str] = None
+    description: Optional[str] = None
+    strategy_name: str
+    strategy_id: UUID
+    total_value: Decimal
+    account_count: int
+    is_unused: bool
+
+
+class EquivalentAccountUsageItem(BaseModel):
+    """One account holding an equivalent, for drill-down popup."""
+    account_id: UUID
+    partial_account_number: Optional[str] = None
+    adviser: Optional[str] = None
+    strategy_name: Optional[str] = None
+    value: Decimal
+    pct_of_equivalent_total: Decimal
 
 
 class AdviserAccountDetailItem(BaseModel):

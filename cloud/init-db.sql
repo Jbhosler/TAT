@@ -68,7 +68,12 @@ CREATE TABLE IF NOT EXISTS product_equivalents (
     strategy_id UUID NOT NULL REFERENCES strategies(id) ON DELETE CASCADE,
     legacy_ticker VARCHAR(50) NOT NULL,
     model_ticker VARCHAR(50) NOT NULL,
-    grade INTEGER NOT NULL CHECK (grade IN (0, 1, 2)),
+    grade INTEGER CHECK (grade IS NULL OR grade IN (0, 1, 2)),
+    buy_control VARCHAR(100),
+    sell_control VARCHAR(100),
+    custodian VARCHAR(100),
+    notes VARCHAR(500),
+    description VARCHAR(500),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

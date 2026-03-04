@@ -106,13 +106,18 @@ class StrategyPosition(Base):
 
 
 class ProductEquivalent(Base):
-    """Product equivalents (GE_Alt.csv data) - maps legacy tickers to model tickers with grades."""
+    """Product equivalents - maps legacy tickers to model tickers with grades, buy/sell controls."""
     __tablename__ = "product_equivalents"
     
     strategy_id = Column(UUID(as_uuid=True), ForeignKey("strategies.id"), nullable=False)
     legacy_ticker = Column(String(50), nullable=False)
     model_ticker = Column(String(50), nullable=False)  # References StrategyPosition.model_ticker
-    grade = Column(Integer, nullable=False)  # 0, 1, or 2
+    grade = Column(Integer, nullable=True)  # 0, 1, or 2; NULL = needs grade in app
+    buy_control = Column(String(100), nullable=True)  # e.g. "Do not buy", "If held"
+    sell_control = Column(String(100), nullable=True)  # e.g. "Do not sell", "Proportion ALL"
+    custodian = Column(String(100), nullable=True)  # e.g. "ALL"
+    notes = Column(String(500), nullable=True)
+    description = Column(String(500), nullable=True)
     
     # Relationships
     strategy = relationship("Strategy", back_populates="product_equivalents")
