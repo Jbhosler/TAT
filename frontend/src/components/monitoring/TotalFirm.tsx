@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { monitoringAPI } from '../../services/api';
 
@@ -15,16 +15,32 @@ type AccountRow = {
   model_name: string | null;
   total_value: number;
   has_equivalents: boolean;
+  registration_type: string | null;
 };
 
 type TotalFirmProps = {
   refreshTrigger?: string | null;
 };
 
+type SortDir = 'asc' | 'desc' | null;
+
+const SortIcon = ({ dir }: { dir: SortDir }) => {
+  if (!dir) return <span className="text-gray-300 ml-1">↕</span>;
+  return <span className="text-indigo-600 ml-1">{dir === 'asc' ? '↑' : '↓'}</span>;
+};
+
 const TotalFirm = ({ refreshTrigger }: TotalFirmProps) => {
   const [summaryByModel, setSummaryByModel] = useState<ModelSummary[]>([]);
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const [summarySort, setSummarySort] = useState<{ col: keyof ModelSummary | null; dir: SortDir }>({ col: null, dir: null });
+
+  const [accountsSort, setAccountsSort] = useState<{ col: keyof AccountRow | null; dir: SortDir }>({ col: null, dir: null });
+  const [accountsFilterAdvisor, setAccountsFilterAdvisor] = useState('');
+  const [accountsFilterPartial, setAccountsFilterPartial] = useState('');
+  const [accountsFilterModel, setAccountsFilterModel] = useState('');
+  const [accountsFilterHasEquiv, setAccountsFilterHasEquiv] = useState<'all' | 'yes' | 'no'>('all');
 
   const load = async () => {
     setLoading(true);
@@ -55,6 +71,69 @@ const TotalFirm = ({ refreshTrigger }: TotalFirmProps) => {
     (sum, row) => sum + (Number(row.total_value) || 0),
     0
   );
+
+  const handleSummarySort = (col: keyof ModelSummary) => {
+    setSummarySort((prev) => {
+      const nextDir = prev.col === col
+        ? (prev.dir === 'asc' ? 'desc' : prev.dir === 'desc' ? null : 'asc')
+        : 'asc';
+      return { col: nextDir ? col : null, dir: nextDir };
+    });
+  };
+
+  const handleAccountsSort = (col: keyof AccountRow) => {
+    setAccountsSort((prev) => {
+      const nextDir = prev.col === col
+        ? (prev.dir === 'asc' ? 'desc' : prev.dir === 'desc' ? null : 'asc')
+        : 'asc';
+      return { col: nextDir ? col : null, dir: nextDir };
+    });
+  };
+
+  const filteredAndSortedSummary = useMemo(() => {
+    let rows = [...summaryByModel];
+    if (summarySort.col && summarySort.dir) {
+      const mult = summarySort.dir === 'asc' ? 1 : -1;
+      rows = [...rows].sort((a, b) => {
+        const ac = a[summarySort.col!];
+        const bc = b[summarySort.col!];
+        if (typeof ac === 'number' && typeof bc === 'number') return mult * (ac - bc);
+        return mult * String(ac ?? '').localeCompare(String(bc ?? ''));
+      });
+    }
+    return rows;
+  }, [summaryByModel, summarySort]);
+
+  const filteredAndSortedAccounts = useMemo(() => {
+    let rows = accounts.filter((r) => {
+      if (accountsFilterAdvisor.trim()) {
+        const q = accountsFilterAdvisor.trim().toLowerCase();
+        if (!(r.advisor ?? '').toLowerCase().includes(q)) return false;
+      }
+      if (accountsFilterPartial.trim()) {
+        const q = accountsFilterPartial.trim().toLowerCase();
+        if (!(r.partial_account_number ?? '').toLowerCase().includes(q)) return false;
+      }
+      if (accountsFilterModel.trim()) {
+        const q = accountsFilterModel.trim().toLowerCase();
+        if (!(r.model_name ?? '').toLowerCase().includes(q)) return false;
+      }
+      if (accountsFilterHasEquiv === 'yes' && !r.has_equivalents) return false;
+      if (accountsFilterHasEquiv === 'no' && r.has_equivalents) return false;
+      return true;
+    });
+    if (accountsSort.col && accountsSort.dir) {
+      const mult = accountsSort.dir === 'asc' ? 1 : -1;
+      rows = [...rows].sort((a, b) => {
+        const ac = a[accountsSort.col!];
+        const bc = b[accountsSort.col!];
+        if (typeof ac === 'number' && typeof bc === 'number') return mult * (ac - bc);
+        if (typeof ac === 'boolean' && typeof bc === 'boolean') return mult * (ac === bc ? 0 : ac ? 1 : -1);
+        return mult * String(ac ?? '').localeCompare(String(bc ?? ''));
+      });
+    }
+    return rows;
+  }, [accounts, accountsFilterAdvisor, accountsFilterPartial, accountsFilterModel, accountsFilterHasEquiv, accountsSort]);
 
   return (
     <div className="bg-white shadow rounded-lg p-6">
@@ -87,13 +166,25 @@ const TotalFirm = ({ refreshTrigger }: TotalFirmProps) => {
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Model</th>
-                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Total Value</th>
-                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Accounts</th>
+                    <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                      <button type="button" onClick={() => handleSummarySort('model_name')} className="flex items-center hover:text-indigo-600">
+                        Model <SortIcon dir={summarySort.col === 'model_name' ? summarySort.dir : null} />
+                      </button>
+                    </th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">
+                      <button type="button" onClick={() => handleSummarySort('total_value')} className="ml-auto flex items-center justify-end hover:text-indigo-600">
+                        Total Value <SortIcon dir={summarySort.col === 'total_value' ? summarySort.dir : null} />
+                      </button>
+                    </th>
+                    <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">
+                      <button type="button" onClick={() => handleSummarySort('account_count')} className="ml-auto flex items-center justify-end hover:text-indigo-600">
+                        Accounts <SortIcon dir={summarySort.col === 'account_count' ? summarySort.dir : null} />
+                      </button>
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {summaryByModel.map((row) => (
+                  {filteredAndSortedSummary.map((row) => (
                     <tr key={row.model_name}>
                       <td className="px-4 py-2 text-sm text-gray-900">{row.model_name}</td>
                       <td className="px-4 py-2 text-sm text-right text-gray-900">${formatDollars(row.total_value)}</td>
@@ -103,27 +194,102 @@ const TotalFirm = ({ refreshTrigger }: TotalFirmProps) => {
                 </tbody>
               </table>
             </div>
-            {summaryByModel.length === 0 && (
-              <p className="text-sm text-gray-500 py-2">No model summary. Ingest a CSV to see data.</p>
+            {filteredAndSortedSummary.length === 0 && (
+              <p className="text-sm text-gray-500 py-2">
+                No model summary. Ingest a CSV to see data.
+              </p>
             )}
           </div>
 
           {/* Accounts table */}
-          <h4 className="text-sm font-medium text-gray-700 mb-2">All Accounts</h4>
+          <div className="flex items-center gap-3 mb-2">
+            <h4 className="text-sm font-medium text-gray-700">All Accounts</h4>
+            {(accountsFilterAdvisor || accountsFilterPartial || accountsFilterModel || accountsFilterHasEquiv !== 'all') && (
+              <span className="text-xs text-gray-500">
+                Showing {filteredAndSortedAccounts.length} of {accounts.length}
+              </span>
+            )}
+          </div>
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Advisor</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Partial Account #</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Model</th>
-                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Value</th>
-                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Has Equivalents</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                    <button type="button" onClick={() => handleAccountsSort('advisor')} className="flex items-center hover:text-indigo-600">
+                      Advisor <SortIcon dir={accountsSort.col === 'advisor' ? accountsSort.dir : null} />
+                    </button>
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                    <button type="button" onClick={() => handleAccountsSort('partial_account_number')} className="flex items-center hover:text-indigo-600">
+                      Partial Account # <SortIcon dir={accountsSort.col === 'partial_account_number' ? accountsSort.dir : null} />
+                    </button>
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                    <button type="button" onClick={() => handleAccountsSort('model_name')} className="flex items-center hover:text-indigo-600">
+                      Model <SortIcon dir={accountsSort.col === 'model_name' ? accountsSort.dir : null} />
+                    </button>
+                  </th>
+                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">
+                    <button type="button" onClick={() => handleAccountsSort('total_value')} className="ml-auto flex items-center justify-end hover:text-indigo-600">
+                      Value <SortIcon dir={accountsSort.col === 'total_value' ? accountsSort.dir : null} />
+                    </button>
+                  </th>
+                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">
+                    <button type="button" onClick={() => handleAccountsSort('has_equivalents')} className="flex items-center justify-center hover:text-indigo-600">
+                      Has Equivalents <SortIcon dir={accountsSort.col === 'has_equivalents' ? accountsSort.dir : null} />
+                    </button>
+                  </th>
+                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase" title="Taxable account">
+                    Tax
+                  </th>
                   <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                </tr>
+                <tr className="bg-gray-100/50">
+                  <th className="px-4 py-1.5">
+                    <input
+                      type="text"
+                      placeholder="Filter…"
+                      value={accountsFilterAdvisor}
+                      onChange={(e) => setAccountsFilterAdvisor(e.target.value)}
+                      className="w-full max-w-[120px] rounded border-gray-300 text-xs py-1"
+                    />
+                  </th>
+                  <th className="px-4 py-1.5">
+                    <input
+                      type="text"
+                      placeholder="Filter…"
+                      value={accountsFilterPartial}
+                      onChange={(e) => setAccountsFilterPartial(e.target.value)}
+                      className="w-full max-w-[120px] rounded border-gray-300 text-xs py-1"
+                    />
+                  </th>
+                  <th className="px-4 py-1.5">
+                    <input
+                      type="text"
+                      placeholder="Filter…"
+                      value={accountsFilterModel}
+                      onChange={(e) => setAccountsFilterModel(e.target.value)}
+                      className="w-full max-w-[120px] rounded border-gray-300 text-xs py-1"
+                    />
+                  </th>
+                  <th className="px-4 py-1.5" />
+                  <th className="px-4 py-1.5" />
+                  <th className="px-4 py-1.5">
+                    <select
+                      value={accountsFilterHasEquiv}
+                      onChange={(e) => setAccountsFilterHasEquiv(e.target.value as 'all' | 'yes' | 'no')}
+                      className="rounded border-gray-300 text-xs py-1 max-w-[90px]"
+                    >
+                      <option value="all">All</option>
+                      <option value="yes">Yes</option>
+                      <option value="no">No</option>
+                    </select>
+                  </th>
+                  <th className="px-4 py-1.5" />
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {accounts.map((row) => (
+                {filteredAndSortedAccounts.map((row) => (
                   <tr key={row.id}>
                     <td className="px-4 py-2 text-sm text-gray-900">{row.advisor ?? '—'}</td>
                     <td className="px-4 py-2 text-sm text-gray-600">{row.partial_account_number ?? '—'}</td>
@@ -134,6 +300,15 @@ const TotalFirm = ({ refreshTrigger }: TotalFirmProps) => {
                         <span className="text-green-600 font-medium" title="Has Grade 1 or 2 equivalents">✓</span>
                       ) : (
                         <span className="text-gray-400">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2 text-sm text-center" title={row.registration_type ?? ''}>
+                      {(row.registration_type || '').toLowerCase() === 'taxable' ? (
+                        <span className="text-green-600 font-medium">✓</span>
+                      ) : (row.registration_type || '').trim() ? (
+                        <span className="text-gray-400">—</span>
+                      ) : (
+                        <span className="text-gray-500">NA</span>
                       )}
                     </td>
                     <td className="px-4 py-2 text-sm text-right">
@@ -149,8 +324,10 @@ const TotalFirm = ({ refreshTrigger }: TotalFirmProps) => {
               </tbody>
             </table>
           </div>
-          {!loading && accounts.length === 0 && (
-            <p className="text-sm text-gray-500 mt-4">No accounts. Upload an aggregated holdings CSV to ingest.</p>
+          {!loading && filteredAndSortedAccounts.length === 0 && (
+            <p className="text-sm text-gray-500 mt-4">
+              {accounts.length === 0 ? 'No accounts. Upload an aggregated holdings CSV to ingest.' : 'No rows match the filter.'}
+            </p>
           )}
         </>
       )}
