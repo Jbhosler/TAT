@@ -10,7 +10,7 @@ from decimal import Decimal
 from backend.database.connection import get_db
 from backend.api.models.database import (
     Prospect, ProspectHolding, ProductEquivalent, TickerMapping, TransitionResult,
-    MappingStatus, Strategy
+    MappingStatus, Strategy, MonitoredAccount
 )
 from backend.api.models.schemas import (
     ProspectCreate,
@@ -18,6 +18,7 @@ from backend.api.models.schemas import (
     ProspectHoldingResponse,
     ProspectListItem,
     ProspectSummary,
+    ProspectLinkAccountRequest,
     TickerMappingCreate,
     TickerMappingResponse,
     ForceSaleRequest,
@@ -41,9 +42,16 @@ async def list_prospects(db: Session = Depends(get_db)):
     result_ids = {
         r[0] for r in db.query(TransitionResult.prospect_id).distinct().all()
     }
+    account_ids = [p.monitored_account_id for p in prospects if p.monitored_account_id is not None]
+    accounts_by_id = {}
+    if account_ids:
+        accounts = db.query(MonitoredAccount).filter(MonitoredAccount.id.in_(account_ids)).all()
+        accounts_by_id = {a.id: a for a in accounts}
     out = []
     for p in prospects:
         strategy = db.query(Strategy).filter(Strategy.id == p.strategy_id).first()
+        acc = accounts_by_id.get(p.monitored_account_id) if p.monitored_account_id else None
+        linked_name = (acc.friendly_name or acc.synthetic_id) if acc else None
         out.append(ProspectListItem(
             id=p.id,
             name=p.name,
@@ -53,8 +61,78 @@ async def list_prospects(db: Session = Depends(get_db)):
             created_at=p.created_at,
             has_result=p.id in result_ids,
             has_document=p.document_pdf is not None,
+            monitored_account_id=p.monitored_account_id,
+            linked_account_name=linked_name,
         ))
     return out
+
+
+@router.delete("/{prospect_id}")
+async def delete_prospect(
+    prospect_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """Delete a prospect scenario and all associated data (holdings, mappings, results)."""
+    prospect = db.query(Prospect).filter(Prospect.id == prospect_id).first()
+    if not prospect:
+        raise HTTPException(status_code=404, detail="Prospect not found")
+    db.delete(prospect)
+    db.commit()
+    return {"message": "Prospect deleted"}
+
+
+@router.get("/{prospect_id}/linkable-accounts")
+async def get_linkable_accounts(
+    prospect_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """List monitored accounts that use the same strategy as the prospect (for linking)."""
+    prospect = db.query(Prospect).filter(Prospect.id == prospect_id).first()
+    if not prospect:
+        raise HTTPException(status_code=404, detail="Prospect not found")
+    accounts = (
+        db.query(MonitoredAccount)
+        .filter(
+            MonitoredAccount.internal_strategy_id == prospect.strategy_id,
+            MonitoredAccount.internal_strategy_id.isnot(None),
+        )
+        .order_by(MonitoredAccount.friendly_name.asc().nullslast(), MonitoredAccount.synthetic_id.asc())
+        .all()
+    )
+    return [
+        {
+            "id": str(a.id),
+            "synthetic_id": a.synthetic_id,
+            "friendly_name": a.friendly_name,
+            "account_display": a.account_display,
+            "advisor": a.advisor,
+        }
+        for a in accounts
+    ]
+
+
+@router.patch("/{prospect_id}/link-account")
+async def link_prospect_to_account(
+    prospect_id: UUID,
+    body: ProspectLinkAccountRequest,
+    db: Session = Depends(get_db)
+):
+    """Link a prospect scenario to a monitored account (or unlink if monitored_account_id is null)."""
+    prospect = db.query(Prospect).filter(Prospect.id == prospect_id).first()
+    if not prospect:
+        raise HTTPException(status_code=404, detail="Prospect not found")
+    if body.monitored_account_id is not None:
+        account = db.query(MonitoredAccount).filter(MonitoredAccount.id == body.monitored_account_id).first()
+        if not account:
+            raise HTTPException(status_code=404, detail="Account not found")
+        if account.internal_strategy_id != prospect.strategy_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Account must use the same strategy as the prospect"
+            )
+    prospect.monitored_account_id = body.monitored_account_id
+    db.commit()
+    return {"message": "Link updated", "monitored_account_id": str(body.monitored_account_id) if body.monitored_account_id else None}
 
 
 @router.get("/{prospect_id}", response_model=ProspectSummary)
@@ -213,7 +291,7 @@ async def get_unmapped_holdings(
     prospect_id: UUID,
     db: Session = Depends(get_db)
 ):
-    """Get holdings that need manual mapping. Excludes holdings that already have a product equivalent (GE_Alt.csv) for this strategy."""
+    """Get holdings that need manual mapping. Excludes holdings that already have a product equivalent (GE_Alt.csv) for this strategy. CASH is excluded—it is auto-mapped to the Cash asset class during rebalance."""
     prospect = db.query(Prospect).filter(Prospect.id == prospect_id).first()
     if not prospect:
         raise HTTPException(status_code=404, detail="Prospect not found")
@@ -231,8 +309,16 @@ async def get_unmapped_holdings(
     ).all()
     tickers_with_equivalent = {pe.legacy_ticker for pe in equivalents}
 
+    # CASH is a special ticker: auto-mapped to Cash asset class during rebalance.
+    # Exclude it from unmapped so the user is not prompted to map it.
+    def _is_cash(ticker: str) -> bool:
+        return (ticker or "").upper().strip() == "CASH"
+
     # Return only holdings that have no product equivalent (truly need user mapping)
-    need_mapping = [h for h in holdings if h.ticker not in tickers_with_equivalent]
+    need_mapping = [
+        h for h in holdings
+        if not _is_cash(h.ticker) and h.ticker not in tickers_with_equivalent
+    ]
     return [ProspectHoldingResponse.model_validate(h) for h in need_mapping]
 
 

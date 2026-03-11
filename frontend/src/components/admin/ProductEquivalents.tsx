@@ -7,11 +7,19 @@ type ProductEquivalentsProps = {
 };
 
 function getErrorMessage(err: unknown): string {
-  if (err && typeof err === 'object' && 'response' in err) {
-    const res = (err as { response?: { data?: { detail?: unknown } } }).response;
-    const detail = res?.data?.detail;
-    if (typeof detail === 'string') return detail;
-    if (Array.isArray(detail)) return detail.map((d: { msg?: string }) => d?.msg || JSON.stringify(d)).join('; ');
+  if (err && typeof err === 'object') {
+    const e = err as { response?: { status?: number; data?: { detail?: unknown } }; code?: string; message?: string };
+    if (e.code === 'ECONNABORTED' || e.message?.includes('timeout')) {
+      return 'Recalculation timed out. The operation may still be running. Try the "Recalculate monitoring" button in a few minutes, or refresh the page.';
+    }
+    if (e.response?.status === 504) {
+      return 'Recalculation took too long and was cancelled. Try the "Recalculate monitoring" button separately after a moment.';
+    }
+    if ('response' in e && e.response) {
+      const detail = e.response?.data?.detail;
+      if (typeof detail === 'string') return detail;
+      if (Array.isArray(detail)) return detail.map((d: { msg?: string }) => d?.msg || JSON.stringify(d)).join('; ');
+    }
   }
   return 'An unexpected error occurred';
 }
@@ -285,7 +293,7 @@ const ProductEquivalents = ({ strategies = [], onStrategiesRefresh }: ProductEqu
                   <span>
                     {uploadStep === 1 && 'Checking for conflicts…'}
                     {uploadStep === 2 && 'Uploading CSV…'}
-                    {uploadStep === 3 && 'Recalculating monitoring data…'}
+                    {uploadStep === 3 && 'Recalculating monitoring data… (may take a few minutes)'}
                     {uploadStep === 4 && 'Refreshing…'}
                   </span>
                   <span>Step {uploadStep} of 4</span>
@@ -312,7 +320,7 @@ const ProductEquivalents = ({ strategies = [], onStrategiesRefresh }: ProductEqu
                   </svg>
                   {uploadStep === 1 && 'Checking for conflicts…'}
                   {uploadStep === 2 && 'Uploading CSV…'}
-                  {uploadStep === 3 && 'Recalculating monitoring data…'}
+                  {uploadStep === 3 && 'Recalculating monitoring data… (may take a few minutes)'}
                   {uploadStep === 4 && 'Refreshing…'}
                 </>
               ) : (

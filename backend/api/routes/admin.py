@@ -8,7 +8,7 @@ from uuid import UUID
 from collections import defaultdict
 from backend.database.connection import get_db
 from backend.api.models.database import (
-    AssetClass, ProductEquivalent, Strategy, StrategyPosition
+    AssetClass, MonitoredAccount, ProductEquivalent, Strategy, StrategyPosition
 )
 from backend.api.models.schemas import (
     ProductEquivalentCreate,
@@ -23,7 +23,7 @@ from backend.api.models.schemas import (
     ResolveConflictRequest,
     SanityCheckPreflightRequest,
 )
-from backend.utils.csv_parser import parse_product_equivalents_csv
+from backend.utils.csv_parser import parse_product_equivalents_csv, parse_registration_type_csv
 
 router = APIRouter()
 
@@ -187,8 +187,8 @@ def _run_sanity_checks(
 
 @router.get("/asset-classes")
 async def list_asset_classes():
-    """List all 9 asset classes."""
-    return [ac.value for ac in AssetClass if ac != AssetClass.CASH]
+    """List all asset classes including Cash."""
+    return [ac.value for ac in AssetClass]
 
 
 @router.get("/product-equivalents/{strategy_id}", response_model=List[ProductEquivalentResponse])
@@ -440,6 +440,181 @@ async def resolve_conflict(
             "message": "Conflict resolved; master mapping applied",
             "rows_updated": len(rows),
         }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/registration-type-sample")
+async def get_registration_type_sample(
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    """
+    Return sample accounts from DB showing the exact format used for matching.
+    Use this to compare with your registration type file - your columns must produce
+    the same values. synthetic_id = hash(Account|Adviser|Model|Firm|Enterprise).
+    """
+    accounts = (
+        db.query(MonitoredAccount)
+        .filter(
+            MonitoredAccount.advisor.isnot(None),
+            MonitoredAccount.external_model_name.isnot(None),
+        )
+        .limit(limit)
+        .all()
+    )
+    # Distinct advisors and models for comparison
+    advisors = sorted(set((a.advisor or "").strip() for a in accounts if (a.advisor or "").strip()))
+    models = sorted(set((a.external_model_name or "").strip() for a in accounts if (a.external_model_name or "").strip()))
+    return {
+        "sample_accounts": [
+            {
+                "advisor": a.advisor,
+                "account_display": a.account_display,
+                "external_model_name": a.external_model_name,
+                "firm": a.firm,
+                "synthetic_id_prefix": (a.synthetic_id or "")[:12] + "…" if a.synthetic_id else None,
+            }
+            for a in accounts
+        ],
+        "distinct_advisors": advisors[:30],
+        "distinct_models": models[:30],
+        "note": "Your file's Adviser, Account, Product/Model, Firm, Enterprise must match these values exactly (including spelling) to produce the same synthetic_id.",
+    }
+
+
+def _account_matches_fallback(acc: MonitoredAccount, advisor: str, model: str, last4: str) -> bool:
+    """Match account by advisor + last4 + external_model_name when synthetic_id fails."""
+    if not advisor or not model or not last4:
+        return False
+    advisor_match = (acc.advisor or "").strip().lower() == advisor.strip().lower()
+    model_match = (acc.external_model_name or "").strip().lower() == model.strip().lower()
+    if not advisor_match or not model_match:
+        return False
+    display = (acc.account_display or "").strip()
+    return last4 in display or display.endswith(last4)
+
+
+@router.post("/registration-type-upload")
+async def upload_registration_type(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Upload CSV with Registration Type (Retirement, Taxable, Trust) per account.
+    Matches by synthetic_id first; falls back to advisor + last4 of account + Product/Model.
+    Expected columns: Adviser, Account, Product (or Program/Model), Firm, Enterprise, Registration Type.
+    Account Number (e.g. xxx-5290) used for fallback matching when Account format differs.
+    """
+    body = await request.body()
+    csv_content = body.decode("utf-8-sig").strip()
+
+    try:
+        rows = parse_registration_type_csv(csv_content)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not rows:
+        return {"message": "No valid rows with Registration Type found", "updated_count": 0}
+
+    # Collect all synthetic_id candidates (parser may return ***** and **** variants)
+    all_sids = set()
+    for r in rows:
+        for sid in r.get("synthetic_id_candidates", [r["synthetic_id"]]):
+            all_sids.add(sid)
+    accounts = db.query(MonitoredAccount).filter(MonitoredAccount.synthetic_id.in_(all_sids)).all()
+    account_by_sid = {a.synthetic_id: a for a in accounts}
+
+    updated = 0
+    fallback_matched = 0
+    unmatched = []
+    for r in rows:
+        acc = None
+        for sid in r.get("synthetic_id_candidates", [r["synthetic_id"]]):
+            acc = account_by_sid.get(sid)
+            if acc:
+                break
+        if acc:
+            acc.registration_type = r["registration_type"]
+            updated += 1
+        else:
+            unmatched.append(r)
+
+    # Fallback: match by advisor + last4 + model when synthetic_id fails
+    if unmatched:
+        all_accounts = db.query(MonitoredAccount).all()
+        for r in unmatched:
+            if not (r.get("last4") and r.get("advisor") and r.get("model")):
+                continue
+            for a in all_accounts:
+                if _account_matches_fallback(a, r["advisor"], r["model"], r["last4"]):
+                    a.registration_type = r["registration_type"]
+                    updated += 1
+                    fallback_matched += 1
+                    break
+
+    try:
+        db.commit()
+        resp = {
+            "message": f"Updated {updated} account(s) with registration type",
+            "updated_count": updated,
+            "file_row_count": len(rows),
+        }
+        if fallback_matched > 0:
+            resp["fallback_matched"] = fallback_matched
+        if updated == 0 and rows:
+            # Diagnostics: compare file values to DB to find naming differences
+            sample = rows[0]
+            file_advisor = (sample.get("advisor") or "").strip().lower()
+            file_model = (sample.get("model") or "").strip().lower()
+            file_last4 = sample.get("last4") or ""
+
+            all_acc = db.query(MonitoredAccount).filter(
+                MonitoredAccount.advisor.isnot(None),
+                MonitoredAccount.external_model_name.isnot(None),
+            ).all()
+
+            # Find advisors in DB - show sample for comparison
+            db_advisors = list(set((a.advisor or "").strip() for a in all_acc if (a.advisor or "").strip()))
+            similar_advisors = []
+            if file_advisor:
+                similar_advisors = [
+                    a for a in db_advisors
+                    if file_advisor in a.lower()
+                    or (a.lower().split() and file_advisor.split() and a.lower().split()[-1] == file_advisor.split()[-1])
+                ][:10]
+            if not similar_advisors and db_advisors:
+                similar_advisors = db_advisors[:10]
+
+            # Find models in DB - show sample for comparison
+            db_models = list(set((a.external_model_name or "").strip() for a in all_acc if (a.external_model_name or "").strip()))
+            similar_models = []
+            if file_model:
+                similar_models = [
+                    m for m in db_models
+                    if any((p in (m or "").lower()) for p in file_model.split()[:2])
+                ][:10]
+            if not similar_models and db_models:
+                similar_models = db_models[:10]
+
+            # Accounts with matching last4 in account_display
+            with_last4 = [a for a in all_acc if file_last4 and file_last4 in (a.account_display or "")]
+            resp["diagnostics"] = {
+                "sample_file_values": {
+                    "advisor": sample.get("advisor"),
+                    "model": sample.get("model"),
+                    "last4": sample.get("last4"),
+                },
+                "db_advisors_sample": similar_advisors,
+                "db_models_sample": similar_models,
+                "db_accounts_with_last4": [
+                    {"advisor": a.advisor, "account_display": a.account_display, "external_model_name": a.external_model_name}
+                    for a in with_last4[:5]
+                ],
+                "hint": "Compare your file values with DB values above. Adviser and Product/Model must match exactly (including spelling). Use 'Download sample from DB' to see full format.",
+            }
+        return resp
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

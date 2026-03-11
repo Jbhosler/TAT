@@ -17,6 +17,7 @@ type EquivalentUsageRow = {
   total_value: number;
   account_count: number;
   is_unused: boolean;
+  retirement_only: boolean;
 };
 
 type AccountUsageRow = {
@@ -24,6 +25,7 @@ type AccountUsageRow = {
   partial_account_number: string | null;
   adviser: string | null;
   strategy_name: string | null;
+  registration_type: string | null;
   value: number;
   pct_of_equivalent_total: number;
 };
@@ -129,7 +131,7 @@ const UnusedEquivalents = ({ refreshTrigger }: UnusedEquivalentsProps) => {
       <div className="bg-white shadow rounded-lg p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-2">Tickers Not in Model or Equivalents</h3>
         <p className="text-sm text-gray-500 mb-4">
-          Tickers held in accounts that are not in the strategy model or product equivalents file. Click the account count to see which accounts hold each ticker.
+          Tickers held in accounts that are not in any strategy model or product equivalents file across the system. Click the account count to see which accounts hold each ticker.
         </p>
         {loading ? (
           <p className="text-sm text-gray-500">Loading…</p>
@@ -184,6 +186,7 @@ const UnusedEquivalents = ({ refreshTrigger }: UnusedEquivalentsProps) => {
         </div>
         <p className="text-sm text-gray-500 mb-4">
           All product equivalents with upload info, total assets, and account count. Click the account count to see which accounts hold each equivalent.
+          &quot;Retirement Only&quot; indicates equivalents used exclusively by Retirement accounts.
         </p>
         <div className="flex items-center gap-2 mb-4">
           <label className="text-sm text-gray-600">As of date:</label>
@@ -255,13 +258,14 @@ const UnusedEquivalents = ({ refreshTrigger }: UnusedEquivalentsProps) => {
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Grade</th>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Strategy</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Retirement Only</th>
                       <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Total Value</th>
                       <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Accounts</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
                     {rows.map((row) => (
-                      <tr key={row.id}>
+                      <tr key={row.id} className={row.retirement_only ? 'bg-amber-50' : undefined}>
                         <td className="px-4 py-2 text-sm text-gray-900">{row.model_ticker}</td>
                         <td className="px-4 py-2 text-sm text-gray-900">{row.legacy_ticker}</td>
                         <td className="px-4 py-2 text-sm text-gray-600">{row.buy_control ?? '—'}</td>
@@ -271,6 +275,15 @@ const UnusedEquivalents = ({ refreshTrigger }: UnusedEquivalentsProps) => {
                         <td className="px-4 py-2 text-sm text-gray-600 max-w-[180px] truncate" title={row.description ?? ''}>{row.description ?? '—'}</td>
                         <td className="px-4 py-2 text-sm text-gray-600">{row.grade ?? '—'}</td>
                         <td className="px-4 py-2 text-sm text-gray-600">{row.strategy_name}</td>
+                        <td className="px-4 py-2 text-sm">
+                          {row.retirement_only ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800" title="All accounts using this equivalent are Retirement">
+                              Yes
+                            </span>
+                          ) : (
+                            <span className="text-gray-400">—</span>
+                          )}
+                        </td>
                         <td className="px-4 py-2 text-sm text-right text-gray-900">${formatDollars(row.total_value)}</td>
                         <td className="px-4 py-2 text-sm text-right">
                           {row.account_count > 0 ? (
@@ -332,6 +345,7 @@ const UnusedEquivalents = ({ refreshTrigger }: UnusedEquivalentsProps) => {
                           <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Partial Account</th>
                           <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Adviser</th>
                           <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Strategy</th>
+                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Registration</th>
                           <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Value</th>
                           <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">% of Total</th>
                           <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
@@ -343,6 +357,13 @@ const UnusedEquivalents = ({ refreshTrigger }: UnusedEquivalentsProps) => {
                             <td className="px-4 py-2 text-sm text-gray-900">{a.partial_account_number ?? '—'}</td>
                             <td className="px-4 py-2 text-sm text-gray-700">{a.adviser ?? '—'}</td>
                             <td className="px-4 py-2 text-sm text-gray-700">{a.strategy_name ?? '—'}</td>
+                            <td className="px-4 py-2 text-sm text-gray-700">
+                              {a.registration_type ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-800">
+                                  {a.registration_type}
+                                </span>
+                              ) : '—'}
+                            </td>
                             <td className="px-4 py-2 text-sm text-right text-gray-900">${formatDollars(a.value)}</td>
                             <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPct(a.pct_of_equivalent_total)}</td>
                             <td className="px-4 py-2 text-sm text-right">

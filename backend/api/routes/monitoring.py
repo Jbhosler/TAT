@@ -3,6 +3,8 @@ Monitoring module endpoints: strategy name mapping, ingest, accounts, snapshots.
 """
 import hashlib
 import logging
+import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
@@ -17,12 +19,14 @@ from backend.api.models.database import (
     Strategy,
     StrategyPosition,
     ProductEquivalent,
+    EquivalentMetrics,
     StrategyNameMapping,
     DiscoveryModel,
     MonitoredAccount,
     AccountSnapshot,
     AccountSnapshotHolding,
     MonitoringIngestRun,
+    Prospect,
 )
 from backend.api.models.schemas import (
     StrategyNameMappingCreate,
@@ -58,8 +62,12 @@ from backend.api.models.schemas import (
     IngestChangesResponse,
     IngestChangeAccountItem,
     IngestChangeAdviserItem,
+    EquivalentReviewItem,
+    EquivalentReviewMetrics,
+    EquivalentReviewRefreshResponse,
 )
 from backend.utils.csv_parser import parse_aggregated_holdings_csv
+from backend.services.alphavantage_service import compute_metrics
 from backend.logic.monitor_engine import (
     compute_rollup_and_scores,
     get_allocations_breakdown,
@@ -518,6 +526,34 @@ async def ingest_aggregated_holdings(
 
 
 RECALCULATE_CHECKSUM = "RECALCULATE"
+RECALCULATE_BATCH_SIZE = 500  # Commit and bulk-op every N snapshots to avoid timeout and memory bloat
+
+
+def _recalc_one_snapshot(
+    snap_id: UUID,
+    holdings_raw: List[Dict[str, Any]],
+    positions_data: List[Dict[str, Any]],
+    pe_data: List[Dict[str, Any]],
+    total_value: Decimal,
+) -> Tuple[UUID, Decimal, Decimal, Optional[Decimal], List[Dict[str, Any]]]:
+    """Compute rollup for one snapshot (runs in thread pool). Returns (snap_id, deviation, purity, cash_pct, holdings_with_meta)."""
+    non_cash = []
+    cash_value = Decimal("0")
+    for h in holdings_raw:
+        ticker = (h.get("ticker") or "").strip().upper()
+        val = Decimal(str(h.get("value", 0)))
+        if ticker == "CASH":
+            cash_value += val
+        else:
+            non_cash.append({"ticker": h.get("ticker"), "value": h.get("value")})
+    actual_by_ac, deviation_score, purity_score, holdings_with_meta = compute_rollup_and_scores(
+        holdings=non_cash,
+        cash_value=cash_value,
+        positions=positions_data,
+        product_equivalents=pe_data,
+    )
+    cash_pct = round(cash_value / total_value * Decimal("100"), 2) if total_value else None
+    return snap_id, deviation_score, purity_score, cash_pct, holdings_with_meta
 
 
 @router.post("/recalculate", response_model=RecalculateResponse)
@@ -526,104 +562,155 @@ async def recalculate_monitoring(
     db: Session = Depends(get_db),
 ):
     """Recompute deviation scores, purity scores, and holdings metadata for all mapped snapshots using current strategy positions and product equivalents. Call after Product Equivalents or Bulk Upload (strategy positions) changes."""
-    snapshots = (
-        db.query(AccountSnapshot)
+    # Get snapshot IDs only first (lightweight - avoids loading all data into memory)
+    q = (
+        db.query(AccountSnapshot.id)
         .join(MonitoredAccount, AccountSnapshot.monitored_account_id == MonitoredAccount.id)
         .filter(AccountSnapshot.is_unmapped.is_(False))
         .filter(MonitoredAccount.internal_strategy_id.isnot(None))
     )
     if strategy_id is not None:
-        snapshots = snapshots.filter(MonitoredAccount.internal_strategy_id == strategy_id)
-    snapshots = snapshots.all()
+        q = q.filter(MonitoredAccount.internal_strategy_id == strategy_id)
+    all_snapshot_ids = [r[0] for r in q.all()]
 
-    if not snapshots:
+    if not all_snapshot_ids:
         return RecalculateResponse(recalculated_count=0, last_ingest_at=None)
 
-    snapshot_ids = [s.id for s in snapshots]
-    account_ids = [s.monitored_account_id for s in snapshots]
-    accounts = db.query(MonitoredAccount).filter(MonitoredAccount.id.in_(account_ids)).all()
-    account_by_id = {a.id: a for a in accounts}
-
-    holdings_all = (
-        db.query(AccountSnapshotHolding)
-        .filter(AccountSnapshotHolding.account_snapshot_id.in_(snapshot_ids))
-        .all()
+    # Load positions and PE once (small - shared across all strategies)
+    strategy_ids_q = db.query(MonitoredAccount.internal_strategy_id).filter(
+        MonitoredAccount.internal_strategy_id.isnot(None)
     )
-    holdings_by_snapshot: dict = {}
-    for h in holdings_all:
-        sid = h.account_snapshot_id
-        if sid not in holdings_by_snapshot:
-            holdings_by_snapshot[sid] = []
-        holdings_by_snapshot[sid].append(h)
-
-    strategy_ids = list({a.internal_strategy_id for a in accounts if a.internal_strategy_id})
+    if strategy_id is not None:
+        strategy_ids_q = strategy_ids_q.filter(MonitoredAccount.internal_strategy_id == strategy_id)
+    strategy_ids = list({r[0] for r in strategy_ids_q.distinct().all()})
+    positions = db.query(StrategyPosition).filter(StrategyPosition.strategy_id.in_(strategy_ids)).all()
+    pe_all = db.query(ProductEquivalent).filter(ProductEquivalent.strategy_id.in_(strategy_ids)).all()
     positions_by_strategy: dict = {}
     pe_by_strategy: dict = {}
-    for sid in strategy_ids:
-        positions = db.query(StrategyPosition).filter(StrategyPosition.strategy_id == sid).all()
-        positions_data = [
-            {
-                "model_ticker": p.model_ticker,
-                "asset_class": p.asset_class.value if hasattr(p.asset_class, "value") else str(p.asset_class),
-                "target_allocation": float(p.target_allocation),
-            }
-            for p in positions
-        ]
-        positions_by_strategy[sid] = positions_data
-        pe_list = db.query(ProductEquivalent).filter(ProductEquivalent.strategy_id == sid).all()
-        pe_by_strategy[sid] = [
+    for p in positions:
+        sid = p.strategy_id
+        if sid not in positions_by_strategy:
+            positions_by_strategy[sid] = []
+        positions_by_strategy[sid].append({
+            "model_ticker": p.model_ticker,
+            "asset_class": p.asset_class.value if hasattr(p.asset_class, "value") else str(p.asset_class),
+            "target_allocation": float(p.target_allocation),
+        })
+    for pe in pe_all:
+        sid = pe.strategy_id
+        if sid not in pe_by_strategy:
+            pe_by_strategy[sid] = []
+        pe_by_strategy[sid].append(
             {"legacy_ticker": pe.legacy_ticker, "model_ticker": pe.model_ticker, "grade": pe.grade}
-            for pe in pe_list
-        ]
+        )
 
     recalculated_count = 0
-    for snap in snapshots:
-        acc = account_by_id.get(snap.monitored_account_id)
-        if not acc or not acc.internal_strategy_id:
-            continue
-        positions_data = positions_by_strategy.get(acc.internal_strategy_id, [])
-        pe_data = pe_by_strategy.get(acc.internal_strategy_id, [])
+    first_as_of_date: Optional[date] = None
 
-        holdings_raw = holdings_by_snapshot.get(snap.id, [])
-        non_cash = []
-        cash_value = Decimal("0")
-        for h in holdings_raw:
-            ticker = (h.ticker or "").strip().upper()
-            val = Decimal(str(h.value))
-            if ticker == "CASH":
-                cash_value += val
-            else:
-                non_cash.append({"ticker": h.ticker, "value": h.value})
+    # Process in chunks to limit memory (never hold more than BATCH_SIZE snapshots in memory)
+    for chunk_start in range(0, len(all_snapshot_ids), RECALCULATE_BATCH_SIZE):
+        chunk_ids = all_snapshot_ids[chunk_start : chunk_start + RECALCULATE_BATCH_SIZE]
 
-        actual_by_ac, deviation_score, purity_score, holdings_with_meta = compute_rollup_and_scores(
-            holdings=non_cash,
-            cash_value=cash_value,
-            positions=positions_data,
-            product_equivalents=pe_data,
+        # Load only this chunk's snapshots + accounts + holdings
+        snapshots = (
+            db.query(AccountSnapshot)
+            .join(MonitoredAccount, AccountSnapshot.monitored_account_id == MonitoredAccount.id)
+            .filter(AccountSnapshot.id.in_(chunk_ids))
+            .filter(AccountSnapshot.is_unmapped.is_(False))
+            .filter(MonitoredAccount.internal_strategy_id.isnot(None))
+        ).all()
+        # chunk_ids already filtered by strategy_id when provided
+        account_ids = [s.monitored_account_id for s in snapshots]
+        accounts = db.query(MonitoredAccount).filter(MonitoredAccount.id.in_(account_ids)).all()
+        account_by_id = {a.id: a for a in accounts}
+
+        holdings_all = (
+            db.query(AccountSnapshotHolding)
+            .filter(AccountSnapshotHolding.account_snapshot_id.in_(chunk_ids))
+            .all()
         )
-        total_val = snap.total_value
-        cash_pct = round(cash_value / total_val * Decimal("100"), 2) if total_val else None
+        holdings_by_snapshot: dict = {}
+        for h in holdings_all:
+            sid = h.account_snapshot_id
+            if sid not in holdings_by_snapshot:
+                holdings_by_snapshot[sid] = []
+            holdings_by_snapshot[sid].append(h)
 
+        # Build work items for this chunk
+        work_items: List[Tuple[Any, List[Dict], List[Dict], List[Dict], Decimal]] = []
+        for snap in snapshots:
+            acc = account_by_id.get(snap.monitored_account_id)
+            if not acc or not acc.internal_strategy_id:
+                continue
+            positions_data = positions_by_strategy.get(acc.internal_strategy_id, [])
+            pe_data = pe_by_strategy.get(acc.internal_strategy_id, [])
+            holdings_raw = [
+                {"ticker": h.ticker, "value": h.value}
+                for h in holdings_by_snapshot.get(snap.id, [])
+            ]
+            work_items.append((snap, holdings_raw, positions_data, pe_data, snap.total_value or Decimal("0")))
+
+        if not work_items:
+            continue
+
+        # Compute with threads (avoids ProcessPoolExecutor memory bloat)
+        max_workers = min(4, (len(work_items) // 5) + 1)
+        results_by_snap_id: Dict[UUID, Tuple[Decimal, Decimal, Optional[Decimal], List[Dict[str, Any]]]] = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(
+                    _recalc_one_snapshot,
+                    snap.id,
+                    h_raw,
+                    pos_data,
+                    pe_data,
+                    total_val,
+                ): snap
+                for snap, h_raw, pos_data, pe_data, total_val in work_items
+            }
+            for future in as_completed(futures):
+                snap_id, deviation_score, purity_score, cash_pct, holdings_with_meta = future.result()
+                results_by_snap_id[snap_id] = (deviation_score, purity_score, cash_pct, holdings_with_meta)
+
+        # Bulk delete, update snapshots, bulk insert for this chunk
+        batch_snap_ids = [item[0].id for item in work_items]
         db.query(AccountSnapshotHolding).filter(
-            AccountSnapshotHolding.account_snapshot_id == snap.id
-        ).delete()
-        snap.total_deviation_score = deviation_score
-        snap.purity_score = purity_score
-        snap.cash_pct = cash_pct
-        for h in holdings_with_meta:
-            db.add(AccountSnapshotHolding(
-                account_snapshot_id=snap.id,
-                ticker=h.get("ticker", ""),
-                asset_class=h.get("asset_class"),
-                value=Decimal(str(h.get("value", 0))),
-                weight_pct=Decimal(str(h.get("weight_pct", 0))) if h.get("weight_pct") is not None else None,
-                grade=h.get("grade"),
-            ))
-        recalculated_count += 1
+            AccountSnapshotHolding.account_snapshot_id.in_(batch_snap_ids)
+        ).delete(synchronize_session=False)
+
+        all_holdings_rows: List[Dict[str, Any]] = []
+        for snap, _, _, _, _ in work_items:
+            res = results_by_snap_id.get(snap.id)
+            if not res:
+                continue
+            deviation_score, purity_score, cash_pct, holdings_with_meta = res
+            snap.total_deviation_score = deviation_score
+            snap.purity_score = purity_score
+            snap.cash_pct = cash_pct
+            if first_as_of_date is None:
+                first_as_of_date = snap.as_of_date
+            for h in holdings_with_meta:
+                all_holdings_rows.append({
+                    "id": uuid.uuid4(),
+                    "account_snapshot_id": snap.id,
+                    "ticker": h.get("ticker", ""),
+                    "asset_class": h.get("asset_class"),
+                    "value": Decimal(str(h.get("value", 0))),
+                    "weight_pct": Decimal(str(h.get("weight_pct", 0))) if h.get("weight_pct") is not None else None,
+                    "grade": h.get("grade"),
+                })
+            recalculated_count += 1
+
+        if all_holdings_rows:
+            db.bulk_insert_mappings(AccountSnapshotHolding, all_holdings_rows)
+        db.commit()
+
+        # Allow garbage collection of chunk data before next iteration
+        del work_items, results_by_snap_id, holdings_by_snapshot, holdings_all, snapshots, accounts, account_by_id
 
     ingest_run = MonitoringIngestRun(
         ingested_count=recalculated_count,
-        as_of_date=snapshots[0].as_of_date if snapshots else None,
+        as_of_date=first_as_of_date,
         file_checksum=RECALCULATE_CHECKSUM,
     )
     db.add(ingest_run)
@@ -941,6 +1028,7 @@ async def get_total_firm(
                 model_name=model_name,
                 total_value=total_value,
                 has_equivalents=has_equivalents,
+                registration_type=acc.registration_type,
             )
         )
         if model_name:
@@ -974,18 +1062,45 @@ async def get_monitored_account(
     return MonitoredAccountResponse.model_validate(account)
 
 
+@router.get("/accounts/{account_id}/linked-prospects")
+async def get_linked_prospects(
+    account_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """Get prospect scenarios linked to this monitored account."""
+    account = db.query(MonitoredAccount).filter(MonitoredAccount.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    prospects = (
+        db.query(Prospect)
+        .filter(Prospect.monitored_account_id == account_id)
+        .order_by(Prospect.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": str(p.id),
+            "name": p.name,
+            "has_document": p.document_pdf is not None,
+        }
+        for p in prospects
+    ]
+
+
 @router.patch("/accounts/{account_id}", response_model=MonitoredAccountResponse)
 async def update_monitored_account(
     account_id: UUID,
     body: MonitoredAccountUpdate,
     db: Session = Depends(get_db),
 ):
-    """Update friendly_name for a monitored account."""
+    """Update friendly_name and/or registration_type for a monitored account."""
     account = db.query(MonitoredAccount).filter(MonitoredAccount.id == account_id).first()
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
     if body.friendly_name is not None:
         account.friendly_name = body.friendly_name.strip() or None
+    if body.registration_type is not None:
+        account.registration_type = body.registration_type.strip() or None
     db.commit()
     db.refresh(account)
     return MonitoredAccountResponse.model_validate(account)
@@ -1303,7 +1418,7 @@ async def get_unmapped_tickers(
     as_of_date: Optional[date] = None,
     db: Session = Depends(get_db),
 ):
-    """Tickers in the latest (or given) snapshot that are not in the model (strategy positions) or product equivalents library."""
+    """Tickers in the latest (or given) snapshot that are not in any model (strategy positions) or product equivalents library across the system."""
     snapshot_date = as_of_date or _get_latest_snapshot_date(db)
     if not snapshot_date:
         return []
@@ -1333,23 +1448,21 @@ async def get_unmapped_tickers(
             holdings_by_snapshot[sid] = []
         holdings_by_snapshot[sid].append(h)
 
-    strategy_ids = [a.internal_strategy_id for a in accounts if a.internal_strategy_id is not None]
-    known_tickers_by_strategy: dict = {}
-    if strategy_ids:
-        product_equivalents = (
-            db.query(ProductEquivalent)
-            .filter(ProductEquivalent.strategy_id.in_(strategy_ids))
-            .all()
-        )
-        positions = db.query(StrategyPosition).filter(StrategyPosition.strategy_id.in_(strategy_ids)).all()
-        for pe in product_equivalents:
-            if pe.strategy_id not in known_tickers_by_strategy:
-                known_tickers_by_strategy[pe.strategy_id] = set()
-            known_tickers_by_strategy[pe.strategy_id].add(pe.legacy_ticker.strip().lower())
-        for pos in positions:
-            if pos.strategy_id not in known_tickers_by_strategy:
-                known_tickers_by_strategy[pos.strategy_id] = set()
-            known_tickers_by_strategy[pos.strategy_id].add(pos.model_ticker.strip().lower())
+    # Build global set of all known tickers: from ALL models and ALL product equivalents in the system
+    known_tickers: set = set()
+    product_equivalents = db.query(ProductEquivalent).all()
+    positions = db.query(StrategyPosition).all()
+    for pe in product_equivalents:
+        lt = (pe.legacy_ticker or "").strip().lower()
+        mt = (pe.model_ticker or "").strip().lower()
+        if lt:
+            known_tickers.add(lt)
+        if mt:
+            known_tickers.add(mt)
+    for pos in positions:
+        mt = (pos.model_ticker or "").strip().lower()
+        if mt:
+            known_tickers.add(mt)
 
     ticker_strategy_value: dict = {}
     ticker_account_ids: dict = {}
@@ -1358,12 +1471,11 @@ async def get_unmapped_tickers(
         if not acc:
             continue
         strategy_id = acc.internal_strategy_id
-        known = known_tickers_by_strategy.get(strategy_id, set()) if strategy_id else set()
         for h in holdings_by_snapshot.get(snap.id, []):
             ticker = (h.ticker or "").strip()
             if not ticker:
                 continue
-            if ticker.lower() not in known:
+            if ticker.lower() not in known_tickers:
                 key = (ticker, strategy_id)
                 if key not in ticker_strategy_value:
                     ticker_strategy_value[key] = Decimal("0")
@@ -1380,18 +1492,23 @@ async def get_unmapped_tickers(
         by_ticker[ticker][1].add(strategy_id)
         by_ticker[ticker][2].update(account_ids)
 
-    all_strategy_ids = {sid for _, (_, sids, _) in by_ticker.items() for sid in sids}
+    all_strategy_ids = {sid for _, (_, sids, _) in by_ticker.items() for sid in sids if sid is not None}
     strategy_names = {}
     if all_strategy_ids:
         strategies = db.query(Strategy).filter(Strategy.id.in_(list(all_strategy_ids))).all()
         strategy_names = {s.id: s.name for s in strategies}
+
+    def _strategy_display(sid) -> str:
+        if sid is None:
+            return "Unmapped"
+        return strategy_names.get(sid, str(sid))
 
     result = [
         UnmappedTickerItem(
             ticker=ticker,
             total_value=total_value,
             account_count=len(account_ids),
-            strategy_names=[strategy_names.get(sid, str(sid)) for sid in sorted((s for s in sids if s is not None))],
+            strategy_names=sorted({_strategy_display(sid) for sid in sids}),
         )
         for ticker, (total_value, sids, account_ids) in by_ticker.items()
     ]
@@ -1405,13 +1522,29 @@ async def get_unmapped_ticker_accounts(
     as_of_date: Optional[date] = None,
     db: Session = Depends(get_db),
 ):
-    """Accounts holding this unmapped ticker (not in model or product equivalents), with value and pct of total."""
+    """Accounts holding this unmapped ticker (not in any model or product equivalents), with value and pct of total."""
     ticker_clean = (ticker or "").strip()
     if not ticker_clean:
         return []
     snapshot_date = as_of_date or _get_latest_snapshot_date(db)
     if not snapshot_date:
         return []
+
+    # Build global set of all known tickers (all models + all equivalents)
+    known_tickers: set = set()
+    for pe in db.query(ProductEquivalent).all():
+        lt = (pe.legacy_ticker or "").strip().lower()
+        mt = (pe.model_ticker or "").strip().lower()
+        if lt:
+            known_tickers.add(lt)
+        if mt:
+            known_tickers.add(mt)
+    for pos in db.query(StrategyPosition).all():
+        mt = (pos.model_ticker or "").strip().lower()
+        if mt:
+            known_tickers.add(mt)
+    if ticker_clean.lower() in known_tickers:
+        return []  # Ticker is known; no unmapped accounts
 
     snapshots = db.query(AccountSnapshot).filter(AccountSnapshot.as_of_date == snapshot_date).all()
     if not snapshots:
@@ -1420,24 +1553,6 @@ async def get_unmapped_ticker_accounts(
     account_ids = [s.monitored_account_id for s in snapshots]
     accounts = db.query(MonitoredAccount).filter(MonitoredAccount.id.in_(account_ids)).all()
     account_by_id = {a.id: a for a in accounts}
-
-    strategy_ids = [a.internal_strategy_id for a in accounts if a.internal_strategy_id is not None]
-    known_tickers_by_strategy: dict = {}
-    if strategy_ids:
-        product_equivalents = (
-            db.query(ProductEquivalent)
-            .filter(ProductEquivalent.strategy_id.in_(strategy_ids))
-            .all()
-        )
-        positions = db.query(StrategyPosition).filter(StrategyPosition.strategy_id.in_(strategy_ids)).all()
-        for pe in product_equivalents:
-            if pe.strategy_id not in known_tickers_by_strategy:
-                known_tickers_by_strategy[pe.strategy_id] = set()
-            known_tickers_by_strategy[pe.strategy_id].add(pe.legacy_ticker.strip().lower())
-        for pos in positions:
-            if pos.strategy_id not in known_tickers_by_strategy:
-                known_tickers_by_strategy[pos.strategy_id] = set()
-            known_tickers_by_strategy[pos.strategy_id].add(pos.model_ticker.strip().lower())
 
     holdings = (
         db.query(AccountSnapshotHolding)
@@ -1457,17 +1572,14 @@ async def get_unmapped_ticker_accounts(
         acc = account_by_id.get(snap.monitored_account_id)
         if not acc:
             continue
-        strategy_id = acc.internal_strategy_id
-        known = known_tickers_by_strategy.get(strategy_id, set()) if strategy_id else set()
-        if ticker_clean.lower() in known:
-            continue
         acc_id = snap.monitored_account_id
         if acc_id not in value_by_account:
             value_by_account[acc_id] = Decimal("0")
         value_by_account[acc_id] += h.value
 
     total_value = sum(value_by_account.values())
-    strategies = db.query(Strategy).filter(Strategy.id.in_(strategy_ids)).all() if strategy_ids else []
+    strategy_ids_from_accounts = {acc.internal_strategy_id for acc in account_by_id.values() if acc.internal_strategy_id is not None}
+    strategies = db.query(Strategy).filter(Strategy.id.in_(list(strategy_ids_from_accounts))).all()
     strategy_names = {s.id: s.name for s in strategies}
 
     result = []
@@ -1479,7 +1591,8 @@ async def get_unmapped_ticker_accounts(
                 account_id=acc_id,
                 partial_account_number=acc.account_display or (acc.synthetic_id[:8] + "…" if acc and acc.synthetic_id else None) if acc else None,
                 adviser=acc.advisor if acc else None,
-                strategy_name=strategy_names.get(acc.internal_strategy_id) if acc else None,
+                strategy_name=strategy_names.get(acc.internal_strategy_id) if acc and acc.internal_strategy_id else ("Unmapped" if acc else None),
+                registration_type=acc.registration_type if acc else None,
                 value=val,
                 pct_of_equivalent_total=pct,
             )
@@ -1582,6 +1695,7 @@ async def get_equivalents_usage(
                     total_value=Decimal("0"),
                     account_count=0,
                     is_unused=True,
+                    retirement_only=False,
                 )
             )
         result.sort(key=lambda x: (x.strategy_name, x.legacy_ticker))
@@ -1592,6 +1706,7 @@ async def get_equivalents_usage(
     snapshot_by_acc = {s.monitored_account_id: s for s in snapshots}
     account_ids = list({s.monitored_account_id for s in snapshots})
     accounts = db.query(MonitoredAccount).filter(MonitoredAccount.id.in_(account_ids)).all()
+    account_by_id = {a.id: a for a in accounts}
     acc_to_strategy = {a.id: a.internal_strategy_id for a in accounts}
     strategy_by_id = {s.id: s for s in db.query(Strategy).filter(Strategy.id.in_(acc_to_strategy.values())).all()}
 
@@ -1628,6 +1743,15 @@ async def get_equivalents_usage(
             if val > 0:
                 total_value += val
                 account_ids_holding.add(snap.monitored_account_id)
+        # retirement_only: all accounts holding this equivalent have registration_type == 'Retirement'
+        retirement_only = False
+        if account_ids_holding:
+            holding_accounts = [account_by_id.get(aid) for aid in account_ids_holding]
+            holding_accounts = [a for a in holding_accounts if a is not None]
+            if holding_accounts and all(
+                (a.registration_type or "").strip().lower() == "retirement" for a in holding_accounts
+            ):
+                retirement_only = True
         result.append(
             EquivalentUsageItem(
                 id=pe.id,
@@ -1644,6 +1768,7 @@ async def get_equivalents_usage(
                 total_value=total_value,
                 account_count=len(account_ids_holding),
                 is_unused=len(account_ids_holding) == 0,
+                retirement_only=retirement_only,
             )
         )
     result.sort(key=lambda x: (x.is_unused, -float(x.total_value), x.strategy_name, x.legacy_ticker))
@@ -1710,6 +1835,7 @@ async def get_equivalent_accounts(
                 partial_account_number=acc.account_display or (acc.synthetic_id[:8] + "…" if acc and acc.synthetic_id else None) if acc else None,
                 adviser=acc.advisor if acc else None,
                 strategy_name=strategy_by_id.get(acc.internal_strategy_id) if acc else None,
+                registration_type=acc.registration_type if acc else None,
                 value=val,
                 pct_of_equivalent_total=pct,
             )
@@ -1848,3 +1974,147 @@ async def get_adviser_account_details(
     detail_rows.sort(key=lambda x: (x.legacy_ticker, -float(x.account_value), x.partial_account_number or ""))
 
     return AdviserAccountDetailsResponse(accounts=detail_rows, legacy_totals=legacy_totals)
+
+
+# --- Equivalent Review ---
+
+
+@router.get("/equivalent-review", response_model=List[EquivalentReviewItem])
+async def get_equivalent_review(
+    strategy_id: Optional[UUID] = Query(None, description="Filter by strategy; if omitted, all equivalents."),
+    db: Session = Depends(get_db),
+):
+    """List product equivalents merged with stored metrics. Load from DB only; no auto API calls."""
+    q = (
+        db.query(ProductEquivalent, Strategy)
+        .join(Strategy, ProductEquivalent.strategy_id == Strategy.id)
+    )
+    if strategy_id is not None:
+        q = q.filter(ProductEquivalent.strategy_id == strategy_id)
+    rows = q.all()
+
+    # Load metrics for all equivalents (skip if equivalent_metrics table doesn't exist yet)
+    metrics_by_equiv = {}
+    if rows:
+        equiv_ids = [pe.id for pe, _ in rows]
+        try:
+            metrics_rows = (
+                db.query(EquivalentMetrics)
+                .filter(EquivalentMetrics.equivalent_id.in_(equiv_ids))
+                .all()
+            )
+            metrics_by_equiv = {m.equivalent_id: m for m in metrics_rows}
+        except Exception as e:
+            logger.warning("Equivalent metrics query failed (run add-equivalent-metrics.sql?): %s", e)
+
+    result = []
+    for pe, s in rows:
+        m = metrics_by_equiv.get(pe.id)
+        metrics = None
+        if m:
+            metrics = EquivalentReviewMetrics(
+                last_updated=m.last_updated,
+                leg_ret_1y=m.leg_ret_1y,
+                leg_ret_3y=m.leg_ret_3y,
+                leg_ret_5y=m.leg_ret_5y,
+                leg_vol=m.leg_vol,
+                leg_mdd=m.leg_mdd,
+                mod_ret_1y=m.mod_ret_1y,
+                mod_ret_3y=m.mod_ret_3y,
+                mod_ret_5y=m.mod_ret_5y,
+                mod_vol=m.mod_vol,
+                mod_mdd=m.mod_mdd,
+                correlation_1y=m.correlation_1y,
+            )
+        result.append(
+            EquivalentReviewItem(
+                id=pe.id,
+                strategy_id=pe.strategy_id,
+                strategy_name=s.name,
+                legacy_ticker=pe.legacy_ticker.strip(),
+                model_ticker=pe.model_ticker.strip(),
+                grade=pe.grade,
+                metrics=metrics,
+            )
+        )
+    result.sort(key=lambda x: (x.strategy_name, x.legacy_ticker))
+    return result
+
+
+@router.post("/equivalent-review/{equivalent_id}/refresh", response_model=EquivalentReviewRefreshResponse)
+async def refresh_equivalent_metrics(
+    equivalent_id: UUID,
+    db: Session = Depends(get_db),
+):
+    """Trigger AlphaVantage sync for this equivalent pair. Fetches data, computes metrics, stores in DB."""
+    pe = db.query(ProductEquivalent).filter(ProductEquivalent.id == equivalent_id).first()
+    if not pe:
+        raise HTTPException(status_code=404, detail="Product equivalent not found")
+
+    legacy_ticker = (pe.legacy_ticker or "").strip()
+    model_ticker = (pe.model_ticker or "").strip()
+    if not legacy_ticker or not model_ticker:
+        raise HTTPException(status_code=400, detail="Equivalent has no legacy or model ticker")
+
+    try:
+        computed = compute_metrics(legacy_ticker, model_ticker)
+    except ValueError as e:
+        logger.warning("Equivalent review refresh: %s", e)
+        return EquivalentReviewRefreshResponse(
+            equivalent_id=equivalent_id,
+            legacy_ticker=legacy_ticker,
+            model_ticker=model_ticker,
+            success=False,
+            error=str(e),
+        )
+    except Exception as e:
+        logger.exception("Equivalent review refresh failed for %s/%s", legacy_ticker, model_ticker)
+        return EquivalentReviewRefreshResponse(
+            equivalent_id=equivalent_id,
+            legacy_ticker=legacy_ticker,
+            model_ticker=model_ticker,
+            success=False,
+            error=str(e),
+        )
+
+    now_utc = datetime.now(timezone.utc)
+    existing = db.query(EquivalentMetrics).filter(EquivalentMetrics.equivalent_id == equivalent_id).first()
+    if existing:
+        existing.last_updated = now_utc
+        existing.leg_ret_1y = Decimal(str(computed["leg_ret_1y"])) if computed.get("leg_ret_1y") is not None else None
+        existing.leg_ret_3y = Decimal(str(computed["leg_ret_3y"])) if computed.get("leg_ret_3y") is not None else None
+        existing.leg_ret_5y = Decimal(str(computed["leg_ret_5y"])) if computed.get("leg_ret_5y") is not None else None
+        existing.leg_vol = Decimal(str(computed["leg_vol"])) if computed.get("leg_vol") is not None else None
+        existing.leg_mdd = Decimal(str(computed["leg_mdd"])) if computed.get("leg_mdd") is not None else None
+        existing.mod_ret_1y = Decimal(str(computed["mod_ret_1y"])) if computed.get("mod_ret_1y") is not None else None
+        existing.mod_ret_3y = Decimal(str(computed["mod_ret_3y"])) if computed.get("mod_ret_3y") is not None else None
+        existing.mod_ret_5y = Decimal(str(computed["mod_ret_5y"])) if computed.get("mod_ret_5y") is not None else None
+        existing.mod_vol = Decimal(str(computed["mod_vol"])) if computed.get("mod_vol") is not None else None
+        existing.mod_mdd = Decimal(str(computed["mod_mdd"])) if computed.get("mod_mdd") is not None else None
+        existing.correlation_1y = Decimal(str(computed["correlation_1y"])) if computed.get("correlation_1y") is not None else None
+    else:
+        new_metrics = EquivalentMetrics(
+            equivalent_id=equivalent_id,
+            last_updated=now_utc,
+            leg_ret_1y=Decimal(str(computed["leg_ret_1y"])) if computed.get("leg_ret_1y") is not None else None,
+            leg_ret_3y=Decimal(str(computed["leg_ret_3y"])) if computed.get("leg_ret_3y") is not None else None,
+            leg_ret_5y=Decimal(str(computed["leg_ret_5y"])) if computed.get("leg_ret_5y") is not None else None,
+            leg_vol=Decimal(str(computed["leg_vol"])) if computed.get("leg_vol") is not None else None,
+            leg_mdd=Decimal(str(computed["leg_mdd"])) if computed.get("leg_mdd") is not None else None,
+            mod_ret_1y=Decimal(str(computed["mod_ret_1y"])) if computed.get("mod_ret_1y") is not None else None,
+            mod_ret_3y=Decimal(str(computed["mod_ret_3y"])) if computed.get("mod_ret_3y") is not None else None,
+            mod_ret_5y=Decimal(str(computed["mod_ret_5y"])) if computed.get("mod_ret_5y") is not None else None,
+            mod_vol=Decimal(str(computed["mod_vol"])) if computed.get("mod_vol") is not None else None,
+            mod_mdd=Decimal(str(computed["mod_mdd"])) if computed.get("mod_mdd") is not None else None,
+            correlation_1y=Decimal(str(computed["correlation_1y"])) if computed.get("correlation_1y") is not None else None,
+        )
+        db.add(new_metrics)
+    db.commit()
+
+    return EquivalentReviewRefreshResponse(
+        equivalent_id=equivalent_id,
+        legacy_ticker=legacy_ticker,
+        model_ticker=model_ticker,
+        success=True,
+        last_updated=now_utc,
+    )

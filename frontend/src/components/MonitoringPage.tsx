@@ -6,12 +6,13 @@ import ConcentrationReport from './monitoring/ConcentrationReport';
 import AccountDetailsByAdviser from './monitoring/AccountDetailsByAdviser';
 import UploadChanges from './monitoring/UploadChanges';
 import UnusedEquivalents from './monitoring/UnusedEquivalents';
+import EquivalentReview from './monitoring/EquivalentReview';
 import AccountDrillDown from './monitoring/AccountDrillDown';
 import ConcentrationAccountList from './monitoring/ConcentrationAccountList';
 
 const MonitoringPage = () => {
   const { id: accountId, ticker, grade } = useParams<{ id?: string; ticker?: string; grade?: string }>();
-  const [activeTab, setActiveTab] = useState<'heatmap' | 'totalfirm' | 'concentration' | 'byadviser' | 'uploadchanges' | 'unusedequivalents'>('totalfirm');
+  const [activeTab, setActiveTab] = useState<'heatmap' | 'totalfirm' | 'concentration' | 'byadviser' | 'uploadchanges' | 'unusedequivalents' | 'equivalentreview'>('totalfirm');
 
   if (accountId) {
     return (
@@ -143,6 +144,16 @@ const MonitoringPage = () => {
             >
               Equivalent Usage
             </button>
+            <button
+              onClick={() => setActiveTab('equivalentreview')}
+              className={`${
+                activeTab === 'equivalentreview'
+                  ? 'border-indigo-500 text-indigo-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
+            >
+              Equivalent Review
+            </button>
           </nav>
         </div>
 
@@ -153,6 +164,7 @@ const MonitoringPage = () => {
           {activeTab === 'byadviser' && <AccountDetailsByAdviser />}
           {activeTab === 'uploadchanges' && <UploadChanges />}
           {activeTab === 'unusedequivalents' && <UnusedEquivalents />}
+          {activeTab === 'equivalentreview' && <EquivalentReview />}
         </div>
       </main>
     </div>

@@ -1,18 +1,17 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { strategiesAPI } from '../../services/api';
+import AdminUploads from './AdminUploads';
 import StrategyEditor from './StrategyEditor';
 import StrategyBridge from '../monitoring/StrategyBridge';
-import BulkUpload from './BulkUpload';
 import AssetClassMapper from './AssetClassMapper';
 import ProductEquivalents from './ProductEquivalents';
 import DataIntegrity from './DataIntegrity';
-import AggregatedHoldingsUpload from './AggregatedHoldingsUpload';
 
 type Strategy = { id: string; name: string };
 
 const AdminPanel = () => {
-  const [activeTab, setActiveTab] = useState<'editor' | 'bridge' | 'upload' | 'mapper' | 'equivalents' | 'integrity' | 'holdings'>('editor');
+  const [activeTab, setActiveTab] = useState<'uploads' | 'editor' | 'bridge' | 'mapper' | 'equivalents' | 'integrity'>('uploads');
   const [strategies, setStrategies] = useState<Strategy[]>([]);
 
   useEffect(() => {
@@ -72,6 +71,16 @@ const AdminPanel = () => {
           <div className="border-b border-gray-200">
             <nav className="-mb-px flex space-x-8">
               <button
+                onClick={() => setActiveTab('uploads')}
+                className={`${
+                  activeTab === 'uploads'
+                    ? 'border-indigo-500 text-indigo-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
+              >
+                Uploads
+              </button>
+              <button
                 onClick={() => setActiveTab('editor')}
                 className={`${
                   activeTab === 'editor'
@@ -90,16 +99,6 @@ const AdminPanel = () => {
                 } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
               >
                 Strategy Bridge
-              </button>
-              <button
-                onClick={() => setActiveTab('upload')}
-                className={`${
-                  activeTab === 'upload'
-                    ? 'border-indigo-500 text-indigo-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
-              >
-                Bulk Upload
               </button>
               <button
                 onClick={() => setActiveTab('mapper')}
@@ -131,24 +130,26 @@ const AdminPanel = () => {
               >
                 Data Integrity
               </button>
-              <button
-                onClick={() => setActiveTab('holdings')}
-                className={`${
-                  activeTab === 'holdings'
-                    ? 'border-indigo-500 text-indigo-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
-              >
-                Aggregated Holdings
-              </button>
             </nav>
           </div>
 
           {/* Tab Content */}
           <div className="mt-6">
+            {activeTab === 'uploads' && (
+              <AdminUploads
+                strategies={strategies}
+                onStrategiesRefresh={() =>
+                  strategiesAPI.list()
+                    .then((r) => {
+                      const data = r?.data;
+                      setStrategies(Array.isArray(data) ? data : (data?.data ?? []));
+                    })
+                    .catch(() => setStrategies([]))
+                }
+              />
+            )}
             {activeTab === 'editor' && <StrategyEditor />}
             {activeTab === 'bridge' && <StrategyBridge />}
-            {activeTab === 'upload' && <BulkUpload />}
             {activeTab === 'mapper' && <AssetClassMapper />}
             {activeTab === 'equivalents' && (
               <ProductEquivalents
@@ -164,7 +165,6 @@ const AdminPanel = () => {
               />
             )}
             {activeTab === 'integrity' && <DataIntegrity />}
-            {activeTab === 'holdings' && <AggregatedHoldingsUpload />}
           </div>
         </div>
       </main>

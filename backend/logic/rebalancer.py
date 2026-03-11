@@ -232,6 +232,24 @@ def map_holdings_to_model_tickers(
             else:
                 unmapped.append(holding)
         
+        # Cash: map CASH/Cash ticker to Cash asset class when strategy has Cash position
+        elif holding.ticker.upper().strip() == "CASH":
+            cash_model_ticker = next(
+                (mt for mt, ac in strategy_positions.items() if ac == AssetClass.CASH),
+                None
+            )
+            if cash_model_ticker:
+                mapped.append(MappedHolding(
+                    ticker=holding.ticker,
+                    value=holding.value,
+                    unrealized_gain_loss=holding.unrealized_gain_loss,
+                    model_ticker=cash_model_ticker,
+                    asset_class=AssetClass.CASH,
+                    grade=0
+                ))
+            else:
+                unmapped.append(holding)
+
         # Unmapped - needs user intervention
         else:
             unmapped.append(holding)
@@ -278,29 +296,26 @@ def calculate_drift_deltas(
     drifts: Dict[AssetClass, Decimal]
 ) -> Dict[AssetClass, Decimal]:
     """
-    Calculate drift deltas for overweight asset classes.
-    Delta = current % - (target % + drift %)
-    Only returns positive deltas (overweight classes).
+    Calculate sell deltas for overweight asset classes.
+    Trades move toward target: delta = current % - target %
+    (Previously used drift tolerance: sold only to target + drift.)
     
     Args:
         current: Current allocation percentages
         targets: Target allocation percentages
-        drifts: Drift percentages
+        drifts: Drift percentages (unused; kept for API compatibility)
         
     Returns:
-        Dictionary of overweight classes and their deltas
+        Dictionary of overweight classes and their deltas (amount to sell)
     """
     deltas = {}
     
     for asset_class in current:
         current_pct = current.get(asset_class, Decimal('0'))
         target_pct = targets.get(asset_class, Decimal('0'))
-        drift_pct = drifts.get(asset_class, Decimal('0'))
+        delta = current_pct - target_pct
         
-        upper_drift_limit = target_pct + drift_pct
-        delta = current_pct - upper_drift_limit
-        
-        # Only include positive deltas (overweight)
+        # Only include positive deltas (overweight: current > target)
         if delta > Decimal('0'):
             deltas[asset_class] = round_to_precision(delta)
     
@@ -318,7 +333,7 @@ def liquidate_waterfall(
     then by Unrealized Gain (lowest to highest).
     
     Greedy elimination: Prefer 100% liquidation if position ≤ required amount.
-    Sell until Upper Drift Limit is reached.
+    Sells the required value to move allocation toward target.
     
     Args:
         overweight_class: Asset class to liquidate
@@ -394,6 +409,9 @@ def calculate_buys(
     """
     buy_orders = []
     for asset_class, current_pct in underweight_classes.items():
+        # Cash is held, not bought; reserve target amount via cash_residual
+        if asset_class == AssetClass.CASH:
+            continue
         target_pct = targets.get(asset_class, Decimal('0'))
         current_value = (current_pct / Decimal('100')) * remaining_value
         target_value = (target_pct / Decimal('100')) * total_value
@@ -544,10 +562,12 @@ def rebalance(
     # Calculate buys (targets as % of full portfolio; current as % of kept positions)
     buy_orders = calculate_buys(underweight, remaining_value, total_value, targets, model_tickers)
     total_bought = sum(order.value for order in buy_orders)
-    # Cash available = proceeds from sells; we can only spend up to that
-    if total_bought > total_sold:
-        # Scale down buy orders so we don't overspend
-        scale = total_sold / total_bought if total_bought > 0 else Decimal('0')
+    # Max spend: proceeds from sells minus target cash (if Cash is in model)
+    target_cash_value = (targets.get(AssetClass.CASH, Decimal('0')) / Decimal('100')) * total_value
+    max_spend = max(Decimal('0'), total_sold - target_cash_value)
+    # Scale down buy orders if we would overspend
+    if total_bought > max_spend:
+        scale = max_spend / total_bought if total_bought > 0 else Decimal('0')
         scaled = []
         for bo in buy_orders:
             scaled.append(BuyOrder(
@@ -584,7 +604,8 @@ def rebalance(
     post_sum_without_cash = sum(poh.value for poh in post_holdings)
     cash_value = max(Decimal('0'), pre_total - post_sum_without_cash)
     if cash_value > 0:
-        post_holdings.append(PostHolding(model_ticker="Cash", asset_class="Cash", value=cash_value))
+        cash_model_ticker = model_tickers.get(AssetClass.CASH, "Cash")
+        post_holdings.append(PostHolding(model_ticker=cash_model_ticker, asset_class="Cash", value=cash_value))
     cash_residual = cash_value  # keep API/DB in sync with post_holdings total
 
     return TransitionResult(

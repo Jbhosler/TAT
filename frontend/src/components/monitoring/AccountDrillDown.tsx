@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { monitoringAPI } from '../../services/api';
+import { monitoringAPI, prospectsAPI } from '../../services/api';
 
 type SnapshotWithBreakdown = {
   snapshot: {
@@ -34,12 +34,17 @@ const AccountDrillDown = () => {
     firm?: string | null;
     advisor?: string | null;
     account_display?: string | null;
+    registration_type?: string | null;
   } | null>(null);
   const [snapshots, setSnapshots] = useState<SnapshotWithBreakdown[]>([]);
   const [friendlyName, setFriendlyName] = useState('');
   const [editingName, setEditingName] = useState(false);
+  const [registrationType, setRegistrationType] = useState<string>('');
+  const [editingRegistrationType, setEditingRegistrationType] = useState(false);
   const [loading, setLoading] = useState(true);
   const [savingName, setSavingName] = useState(false);
+  const [savingRegistrationType, setSavingRegistrationType] = useState(false);
+  const [linkedProspects, setLinkedProspects] = useState<Array<{ id: string; name: string; has_document: boolean }>>([]);
 
   const loadAccount = async () => {
     if (!id) return;
@@ -47,6 +52,7 @@ const AccountDrillDown = () => {
       const res = await monitoringAPI.getAccount(id);
       setAccount(res.data);
       setFriendlyName(res.data.friendly_name || '');
+      setRegistrationType(res.data.registration_type || '');
     } catch (err) {
       console.error('Failed to load account:', err);
       setAccount(null);
@@ -64,13 +70,23 @@ const AccountDrillDown = () => {
     }
   };
 
+  const loadLinkedProspects = async () => {
+    if (!id) return;
+    try {
+      const res = await monitoringAPI.getLinkedProspects(id);
+      setLinkedProspects(res.data || []);
+    } catch {
+      setLinkedProspects([]);
+    }
+  };
+
   useEffect(() => {
     if (!id) {
       setLoading(false);
       return;
     }
     setLoading(true);
-    Promise.all([loadAccount(), loadSnapshots()]).finally(() => setLoading(false));
+    Promise.all([loadAccount(), loadSnapshots(), loadLinkedProspects()]).finally(() => setLoading(false));
   }, [id]);
 
   const handleSaveFriendlyName = async () => {
@@ -84,6 +100,21 @@ const AccountDrillDown = () => {
       alert(err.response?.data?.detail || 'Failed to update name');
     } finally {
       setSavingName(false);
+    }
+  };
+
+  const handleSaveRegistrationType = async () => {
+    if (!id) return;
+    setSavingRegistrationType(true);
+    try {
+      const value = registrationType.trim() || null;
+      await monitoringAPI.updateAccount(id, { registration_type: value });
+      setEditingRegistrationType(false);
+      loadAccount();
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Failed to update registration type');
+    } finally {
+      setSavingRegistrationType(false);
     }
   };
 
@@ -120,16 +151,17 @@ const AccountDrillDown = () => {
         <h3 className="text-lg font-semibold text-gray-900 mb-3">
           {account.friendly_name || 'Account'} {account.account_display && <span className="text-gray-600 font-normal">({account.account_display})</span>}
         </h3>
-        {(account.firm || account.advisor || account.account_display) && (
+        {(account.firm || account.advisor || account.account_display || account.registration_type) && (
           <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-gray-600 mb-4">
             {account.firm && <span><span className="font-medium text-gray-700">Firm:</span> {account.firm}</span>}
             {account.advisor && <span><span className="font-medium text-gray-700">Advisor:</span> {account.advisor}</span>}
             {account.account_display && <span><span className="font-medium text-gray-700">Account:</span> {account.account_display}</span>}
           </div>
         )}
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="text-sm font-medium text-gray-700">Friendly name:</span>
-          {editingName ? (
+        <div className="flex flex-wrap items-center gap-6 mb-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm font-medium text-gray-700">Friendly name:</span>
+            {editingName ? (
             <>
               <input
                 type="text"
@@ -163,7 +195,97 @@ const AccountDrillDown = () => {
               </button>
             </>
           )}
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm font-medium text-gray-700">Registration type:</span>
+            {editingRegistrationType ? (
+              <>
+                <select
+                  value={registrationType}
+                  onChange={(e) => setRegistrationType(e.target.value)}
+                  className="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                >
+                  <option value="">NA</option>
+                  <option value="Taxable">Taxable</option>
+                  <option value="Retirement">Retirement</option>
+                  <option value="Trust">Trust</option>
+                </select>
+                <button
+                  onClick={handleSaveRegistrationType}
+                  disabled={savingRegistrationType}
+                  className="px-3 py-1.5 bg-indigo-600 text-white text-sm font-medium rounded-md hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => { setEditingRegistrationType(false); setRegistrationType(account.registration_type || ''); }}
+                  className="px-3 py-1.5 border border-gray-300 text-sm rounded-md text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                  account.registration_type
+                    ? account.registration_type.toLowerCase() === 'taxable'
+                      ? 'bg-green-100 text-green-800'
+                      : account.registration_type.toLowerCase() === 'retirement'
+                        ? 'bg-amber-100 text-amber-800'
+                        : account.registration_type.toLowerCase() === 'trust'
+                          ? 'bg-indigo-100 text-indigo-800'
+                          : 'bg-gray-100 text-gray-800'
+                    : 'bg-gray-100 text-gray-500'
+                }`}>
+                  {account.registration_type || 'NA'}
+                </span>
+                <button
+                  onClick={() => { setRegistrationType(account.registration_type || ''); setEditingRegistrationType(true); }}
+                  className="text-sm text-indigo-600 hover:text-indigo-800"
+                >
+                  Edit
+                </button>
+              </>
+            )}
+          </div>
         </div>
+        {linkedProspects.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-gray-200">
+            <span className="text-sm font-medium text-gray-700">Linked scenarios:</span>
+            <ul className="mt-2 space-y-1">
+              {linkedProspects.map((p) => (
+                <li key={p.id} className="flex flex-wrap items-center gap-2 text-sm">
+                  <Link
+                    to={`/prospect/${p.id}`}
+                    className="text-indigo-600 hover:text-indigo-800 font-medium"
+                  >
+                    {p.name}
+                  </Link>
+                  {p.has_document && (
+                    <>
+                      <span className="text-gray-300">·</span>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const res = await prospectsAPI.getDocument(p.id);
+                            const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+                            window.open(url, '_blank', 'noopener');
+                          } catch {
+                            alert('Could not load document.');
+                          }
+                        }}
+                        className="text-indigo-600 hover:text-indigo-800"
+                      >
+                        View document
+                      </button>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
 
       {snap && (
@@ -175,22 +297,27 @@ const AccountDrillDown = () => {
                 {(snap.allocations || []).map((a) => (
                   <div key={a.asset_class} className="flex items-center gap-4">
                     <span className="w-40 text-sm font-medium text-gray-700">{a.asset_class}</span>
-                    <div className="flex-1 flex gap-2 items-center">
-                      <div className="flex-1 h-6 bg-gray-100 rounded overflow-hidden flex">
-                        <div
-                          className="bg-amber-400"
-                          style={{ width: `${Math.min(100, Number(a.actual_pct))}%` }}
-                          title={`Actual ${formatPct(a.actual_pct)}`}
-                        />
-                        <div
-                          className="bg-indigo-200 border-l border-indigo-400"
-                          style={{ width: `${Math.min(100, Number(a.target_pct))}%` }}
-                          title={`Target ${formatPct(a.target_pct)}`}
-                        />
+                    <div className="flex-1 flex gap-4 items-center">
+                      <div className="flex-1 flex gap-2 items-center">
+                        <div className="flex-1 h-6 bg-gray-100 rounded overflow-hidden">
+                          <div
+                            className="h-full bg-amber-400 rounded-l"
+                            style={{ width: `${Math.min(100, Number(a.actual_pct))}%` }}
+                            title={`Actual ${formatPct(a.actual_pct)}`}
+                          />
+                        </div>
+                        <span className="text-xs text-gray-500 w-12">Actual {formatPct(a.actual_pct)}</span>
                       </div>
-                      <span className="text-xs text-gray-500 w-24">
-                        Actual {formatPct(a.actual_pct)} / Target {formatPct(a.target_pct)}
-                      </span>
+                      <div className="flex-1 flex gap-2 items-center">
+                        <div className="flex-1 h-6 bg-gray-100 rounded overflow-hidden">
+                          <div
+                            className="h-full bg-indigo-200 rounded"
+                            style={{ width: `${Math.min(100, Number(a.target_pct))}%` }}
+                            title={`Target ${formatPct(a.target_pct)}`}
+                          />
+                        </div>
+                        <span className="text-xs text-gray-500 w-12">Target {formatPct(a.target_pct)}</span>
+                      </div>
                     </div>
                     <span className={`text-sm w-16 ${Number(a.drift_pct) >= 0 ? 'text-amber-600' : 'text-gray-600'}`}>
                       Drift {formatPct(a.drift_pct)}
@@ -198,7 +325,7 @@ const AccountDrillDown = () => {
                   </div>
                 ))}
               </div>
-              <p className="text-xs text-gray-500 mt-2">Bar: amber = actual %, indigo = target %</p>
+              <p className="text-xs text-gray-500 mt-2">Left bar: actual %. Right bar: target %. Each scaled 0–100%.</p>
             </div>
           )}
 
@@ -297,7 +424,7 @@ const AccountDrillDown = () => {
                             <tbody className="bg-white divide-y divide-gray-200">
                               {rows.map((h, i) => (
                                 <tr key={i}>
-                                  <td className="px-4 py-2 text-sm text-gray-900">{h.ticker}</td>
+                                  <td className={`px-4 py-2 text-sm text-gray-900 ${h.grade === 0 ? 'font-bold' : ''}`}>{h.ticker}</td>
                                   <td className="px-4 py-2 text-sm text-right">${formatDollars(h.value)}</td>
                                   <td className="px-4 py-2 text-sm text-right">{h.weight_pct != null ? formatPct(h.weight_pct) : '—'}</td>
                                   <td className="px-4 py-2 text-sm">{h.grade != null ? h.grade : '—'}</td>

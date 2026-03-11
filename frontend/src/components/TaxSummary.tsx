@@ -231,37 +231,88 @@ const TaxSummary = ({ prospectId }: TaxSummaryProps) => {
           </div>
         </div>
 
-        <div>
-          <h3 className="text-sm font-medium text-gray-700 mb-2">
-            Sell Orders Breakdown
-          </h3>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Ticker
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Value
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Gain/Loss
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Grade
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {result.sell_orders.map((order, index) => {
-                  const orderGain = order.gain_loss >= 0;
-                  const orderColorClass = orderGain ? 'text-red-600' : 'text-green-600';
-                  
-                  return (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div>
+            <h3 className="text-sm font-medium text-gray-700 mb-2">
+              Sell Orders
+            </h3>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Ticker
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Value
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Gain/Loss
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Grade
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {result.sell_orders.map((order, index) => {
+                    const orderGain = order.gain_loss >= 0;
+                    const orderColorClass = orderGain ? 'text-red-600' : 'text-green-600';
+                    
+                    return (
+                      <tr key={index}>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                          {order.ticker}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                          ${Number(order.value).toLocaleString('en-US', {
+                            minimumFractionDigits: 0,
+                            maximumFractionDigits: 0,
+                          })}
+                        </td>
+                        <td className={`px-4 py-3 whitespace-nowrap text-sm font-medium ${orderColorClass}`}>
+                          ${Number(order.gain_loss).toLocaleString('en-US', {
+                            minimumFractionDigits: 0,
+                            maximumFractionDigits: 0,
+                          })}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                          {order.grade}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div>
+            <h3 className="text-sm font-medium text-gray-700 mb-2">
+              Buy Orders
+            </h3>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Model Ticker
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Asset Class
+                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Value
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {result.buy_orders.map((order, index) => (
                     <tr key={index}>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                        {order.ticker}
+                      <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                        {order.model_ticker}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                        {order.asset_class}
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                         ${Number(order.value).toLocaleString('en-US', {
@@ -269,20 +320,11 @@ const TaxSummary = ({ prospectId }: TaxSummaryProps) => {
                           maximumFractionDigits: 0,
                         })}
                       </td>
-                      <td className={`px-4 py-3 whitespace-nowrap text-sm font-medium ${orderColorClass}`}>
-                        ${Number(order.gain_loss).toLocaleString('en-US', {
-                          minimumFractionDigits: 0,
-                          maximumFractionDigits: 0,
-                        })}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-                        {order.grade}
-                      </td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
 

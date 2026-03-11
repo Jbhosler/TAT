@@ -8,6 +8,8 @@ from backend.logic.rebalancer import Holding
 # Common ETF/Mutual Fund suffixes and patterns
 FUND_SUFFIXES = ['SPY', 'VTI', 'VOO', 'QQQ', 'VEA', 'VWO', 'AGG', 'BND', 'TLT']
 KNOWN_FUND_TICKERS = {
+    # Cash (rebalanceable, not side pocket)
+    'CASH',
     # Common ETFs
     'SPY', 'SPYM', 'VTI', 'VOO', 'QQQ', 'VEA', 'VWO', 'AGG', 'BND', 'TLT',
     'IVV', 'IWM', 'EFA', 'EEM', 'IEFA', 'IEMG', 'VGK', 'VPL', 'VXUS',

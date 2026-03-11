@@ -12,7 +12,7 @@ spec:
         autoscaling.knative.dev/maxScale: "10"
     spec:
       containerConcurrency: 80
-      timeoutSeconds: 300
+      timeoutSeconds: 900
       containers:
       - image: gcr.io/tax-aware-transition-tool/tat-backend:latest
         ports:
@@ -43,6 +43,11 @@ spec:
           valueFrom:
             secretKeyRef:
               name: db-password
+              key: latest
+        - name: ALPHAVANTAGE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: Alpha-API
               key: latest
         resources:
           limits:

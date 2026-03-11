@@ -66,6 +66,10 @@ export const strategiesAPI = {
 // Prospects API
 export const prospectsAPI = {
   list: () => api.get('/api/prospects'),
+  delete: (id: string) => api.delete(`/api/prospects/${id}`),
+  getLinkableAccounts: (id: string) => api.get(`/api/prospects/${id}/linkable-accounts`),
+  linkAccount: (id: string, monitoredAccountId: string | null) =>
+    api.patch(`/api/prospects/${id}/link-account`, { monitored_account_id: monitoredAccountId }),
   get: (id: string) => api.get(`/api/prospects/${id}`),
   getDocument: (id: string) => api.get(`/api/prospects/${id}/document`, { responseType: 'blob' }),
   uploadDocument: (id: string, file: File) => {
@@ -123,6 +127,18 @@ export const adminAPI = {
     master_grade: number;
     strategy_ids?: string[];
   }) => api.post('/api/admin/resolve-conflict', body),
+  uploadRegistrationType: (csvContent: string) =>
+    api.post('/api/admin/registration-type-upload', new Blob([csvContent], { type: 'text/csv; charset=utf-8' }), {
+      headers: { 'Content-Type': 'text/csv; charset=utf-8' },
+      transformRequest: [(data) => data],
+    }),
+  getRegistrationTypeSample: (limit?: number) =>
+    api.get<{
+      sample_accounts: Array<{ advisor: string | null; account_display: string | null; external_model_name: string | null; firm: string | null; synthetic_id_prefix: string | null }>;
+      distinct_advisors: string[];
+      distinct_models: string[];
+      note: string;
+    }>('/api/admin/registration-type-sample', { params: limit != null ? { limit } : undefined }),
 };
 
 // Monitoring API
@@ -141,6 +157,7 @@ export const monitoringAPI = {
   recalculate: (params?: { strategy_id?: string }) =>
     api.post<{ recalculated_count: number; last_ingest_at: string | null }>('/api/monitoring/recalculate', undefined, {
       params: params?.strategy_id ? { strategy_id: params.strategy_id } : undefined,
+      timeout: 600000, // 10 min - recalculate can be slow with many accounts
     }),
   lastIngest: () => api.get<{ last_ingest_at: string | null; as_of_date: string | null }>('/api/monitoring/last-ingest'),
   ingestChanges: () =>
@@ -173,10 +190,13 @@ export const monitoringAPI = {
         model_name: string | null;
         total_value: number;
         has_equivalents: boolean;
+        registration_type: string | null;
       }>;
     }>('/api/monitoring/total-firm', { params }),
   getAccount: (id: string) => api.get(`/api/monitoring/accounts/${id}`),
-  updateAccount: (id: string, body: { friendly_name?: string }) =>
+  getLinkedProspects: (accountId: string) =>
+    api.get<Array<{ id: string; name: string; has_document: boolean }>>(`/api/monitoring/accounts/${accountId}/linked-prospects`),
+  updateAccount: (id: string, body: { friendly_name?: string; registration_type?: string | null }) =>
     api.patch(`/api/monitoring/accounts/${id}`, body),
   getAccountSnapshots: (id: string, params?: { as_of_date?: string }) =>
     api.get(`/api/monitoring/accounts/${id}/snapshots`, { params }),
@@ -194,6 +214,7 @@ export const monitoringAPI = {
       partial_account_number: string | null;
       adviser: string | null;
       strategy_name: string | null;
+      registration_type: string | null;
       value: number;
       pct_of_equivalent_total: number;
     }>>(`/api/monitoring/unmapped-tickers/${encodeURIComponent(ticker)}/accounts`, { params }),
@@ -215,6 +236,7 @@ export const monitoringAPI = {
       total_value: number;
       account_count: number;
       is_unused: boolean;
+      retirement_only: boolean;
     }>>('/api/monitoring/equivalents-usage', { params }),
   equivalentAccounts: (equivalentId: string, params?: { as_of_date?: string }) =>
     api.get<Array<{
@@ -222,12 +244,41 @@ export const monitoringAPI = {
       partial_account_number: string | null;
       adviser: string | null;
       strategy_name: string | null;
+      registration_type: string | null;
       value: number;
       pct_of_equivalent_total: number;
     }>>(`/api/monitoring/equivalents-usage/${equivalentId}/accounts`, { params }),
   listAdvisers: () => api.get<string[]>('/api/monitoring/advisers'),
   getAdviserAccounts: (adviser: string, params?: { as_of_date?: string }) =>
     api.get<{ accounts: Array<{ account_id: string; partial_account_number: string | null; account_value: number; legacy_ticker: string; model_ticker: string }>; legacy_totals: Array<{ legacy_ticker: string; total_value: number; account_count: number }> }>('/api/monitoring/adviser-accounts', { params: { adviser, ...params } }),
+  // Equivalent Review
+  equivalentReview: (params?: { strategy_id?: string }) =>
+    api.get<Array<{
+      id: string;
+      strategy_id: string;
+      strategy_name: string;
+      legacy_ticker: string;
+      model_ticker: string;
+      grade: number | null;
+      metrics: {
+        last_updated: string | null;
+        leg_ret_1y: number | null;
+        leg_ret_3y: number | null;
+        leg_ret_5y: number | null;
+        leg_vol: number | null;
+        leg_mdd: number | null;
+        mod_ret_1y: number | null;
+        mod_ret_3y: number | null;
+        mod_ret_5y: number | null;
+        mod_vol: number | null;
+        mod_mdd: number | null;
+        correlation_1y: number | null;
+      } | null;
+    }>>('/api/monitoring/equivalent-review', { params }),
+  equivalentReviewRefresh: (equivalentId: string) =>
+    api.post<{ equivalent_id: string; legacy_ticker: string; model_ticker: string; success: boolean; last_updated?: string; error?: string }>(
+      `/api/monitoring/equivalent-review/${equivalentId}/refresh`
+    ),
 };
 
 export default api;

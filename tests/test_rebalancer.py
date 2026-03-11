@@ -72,20 +72,19 @@ def test_grade_2_sold_before_grade_1():
     assert sell_orders[1].grade == 1
 
 
-def test_sell_to_upper_drift_limit():
+def test_sell_to_target():
     """
-    Test: Sells stop at (Target % + Drift %), not midpoint.
+    Test: Sells move toward target (current - target), not to drift tolerance.
     """
     current = {AssetClass.US_LARGE_CORE: Decimal('40.0')}  # 40% current
     targets = {AssetClass.US_LARGE_CORE: Decimal('30.0')}  # 30% target
-    drifts = {AssetClass.US_LARGE_CORE: Decimal('5.0')}  # 5% drift
+    drifts = {AssetClass.US_LARGE_CORE: Decimal('5.0')}  # drift unused
     
-    # Upper drift limit = 30% + 5% = 35%
-    # Delta = 40% - 35% = 5%
+    # Delta = 40% - 30% = 10% (sell to target)
     deltas = calculate_drift_deltas(current, targets, drifts)
     
     assert AssetClass.US_LARGE_CORE in deltas
-    assert deltas[AssetClass.US_LARGE_CORE] == Decimal('5.0')  # Should sell 5%, not 10% to midpoint
+    assert deltas[AssetClass.US_LARGE_CORE] == Decimal('10.0')  # Sell 10% to reach target
 
 
 def test_prefer_full_liquidation():

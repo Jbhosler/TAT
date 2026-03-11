@@ -203,6 +203,13 @@ class ProspectListItem(BaseModel):
     created_at: datetime
     has_result: bool = False
     has_document: bool = False
+    monitored_account_id: Optional[UUID] = None
+    linked_account_name: Optional[str] = None
+
+
+class ProspectLinkAccountRequest(BaseModel):
+    """Request to link or unlink a prospect to a monitored account."""
+    monitored_account_id: Optional[UUID] = None  # None to unlink
 
 
 class ProspectSummary(BaseModel):
@@ -344,13 +351,15 @@ class MonitoredAccountResponse(BaseModel):
     firm: Optional[str] = None
     advisor: Optional[str] = None
     account_display: Optional[str] = None
+    registration_type: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
 
 class MonitoredAccountUpdate(BaseModel):
-    """Update friendly_name for a monitored account."""
+    """Update friendly_name and/or registration_type for a monitored account."""
     friendly_name: Optional[str] = Field(None, max_length=255)
+    registration_type: Optional[str] = Field(None, max_length=50)  # Retirement, Taxable, Trust, or empty for NA
 
 
 class AccountSnapshotHoldingResponse(BaseModel):
@@ -491,6 +500,7 @@ class EquivalentUsageItem(BaseModel):
     total_value: Decimal
     account_count: int
     is_unused: bool
+    retirement_only: bool = False  # True when all accounts using this equivalent are Retirement
 
 
 class EquivalentAccountUsageItem(BaseModel):
@@ -499,6 +509,7 @@ class EquivalentAccountUsageItem(BaseModel):
     partial_account_number: Optional[str] = None
     adviser: Optional[str] = None
     strategy_name: Optional[str] = None
+    registration_type: Optional[str] = None
     value: Decimal
     pct_of_equivalent_total: Decimal
 
@@ -581,6 +592,7 @@ class TotalFirmAccountItem(BaseModel):
     model_name: Optional[str] = None
     total_value: Decimal
     has_equivalents: bool  # True if snapshot has any Grade 1 or 2 holdings
+    registration_type: Optional[str] = None  # Retirement, Taxable, Trust
 
 
 class TotalFirmResponse(BaseModel):
@@ -608,6 +620,44 @@ class IngestChangeAdviserItem(BaseModel):
     prior_account_count: int
     current_account_count: int
     delta: int
+
+
+# Equivalent Review schemas
+class EquivalentReviewMetrics(BaseModel):
+    """Stored metrics for one equivalent (legacy vs model)."""
+    last_updated: Optional[datetime] = None
+    leg_ret_1y: Optional[Decimal] = None
+    leg_ret_3y: Optional[Decimal] = None
+    leg_ret_5y: Optional[Decimal] = None
+    leg_vol: Optional[Decimal] = None
+    leg_mdd: Optional[Decimal] = None
+    mod_ret_1y: Optional[Decimal] = None
+    mod_ret_3y: Optional[Decimal] = None
+    mod_ret_5y: Optional[Decimal] = None
+    mod_vol: Optional[Decimal] = None
+    mod_mdd: Optional[Decimal] = None
+    correlation_1y: Optional[Decimal] = None
+
+
+class EquivalentReviewItem(BaseModel):
+    """Product equivalent merged with stored metrics for Equivalent Review dashboard."""
+    id: UUID
+    strategy_id: UUID
+    strategy_name: str
+    legacy_ticker: str
+    model_ticker: str
+    grade: Optional[int] = None
+    metrics: Optional[EquivalentReviewMetrics] = None
+
+
+class EquivalentReviewRefreshResponse(BaseModel):
+    """Response from POST equivalent-review/{id}/refresh."""
+    equivalent_id: UUID
+    legacy_ticker: str
+    model_ticker: str
+    success: bool
+    last_updated: Optional[datetime] = None
+    error: Optional[str] = None
 
 
 class IngestChangesResponse(BaseModel):

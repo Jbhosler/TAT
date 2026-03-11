@@ -41,6 +41,7 @@ const TotalFirm = ({ refreshTrigger }: TotalFirmProps) => {
   const [accountsFilterPartial, setAccountsFilterPartial] = useState('');
   const [accountsFilterModel, setAccountsFilterModel] = useState('');
   const [accountsFilterHasEquiv, setAccountsFilterHasEquiv] = useState<'all' | 'yes' | 'no'>('all');
+  const [accountsFilterRegistrationType, setAccountsFilterRegistrationType] = useState<'all' | 'taxable' | 'retirement' | 'trust' | 'na'>('all');
 
   const load = async () => {
     setLoading(true);
@@ -120,6 +121,13 @@ const TotalFirm = ({ refreshTrigger }: TotalFirmProps) => {
       }
       if (accountsFilterHasEquiv === 'yes' && !r.has_equivalents) return false;
       if (accountsFilterHasEquiv === 'no' && r.has_equivalents) return false;
+      if (accountsFilterRegistrationType !== 'all') {
+        const rt = (r.registration_type || '').trim().toLowerCase();
+        if (accountsFilterRegistrationType === 'taxable' && rt !== 'taxable') return false;
+        if (accountsFilterRegistrationType === 'retirement' && rt !== 'retirement') return false;
+        if (accountsFilterRegistrationType === 'trust' && rt !== 'trust') return false;
+        if (accountsFilterRegistrationType === 'na' && rt !== '') return false;
+      }
       return true;
     });
     if (accountsSort.col && accountsSort.dir) {
@@ -133,7 +141,7 @@ const TotalFirm = ({ refreshTrigger }: TotalFirmProps) => {
       });
     }
     return rows;
-  }, [accounts, accountsFilterAdvisor, accountsFilterPartial, accountsFilterModel, accountsFilterHasEquiv, accountsSort]);
+  }, [accounts, accountsFilterAdvisor, accountsFilterPartial, accountsFilterModel, accountsFilterHasEquiv, accountsFilterRegistrationType, accountsSort]);
 
   return (
     <div className="bg-white shadow rounded-lg p-6">
@@ -204,7 +212,7 @@ const TotalFirm = ({ refreshTrigger }: TotalFirmProps) => {
           {/* Accounts table */}
           <div className="flex items-center gap-3 mb-2">
             <h4 className="text-sm font-medium text-gray-700">All Accounts</h4>
-            {(accountsFilterAdvisor || accountsFilterPartial || accountsFilterModel || accountsFilterHasEquiv !== 'all') && (
+            {(accountsFilterAdvisor || accountsFilterPartial || accountsFilterModel || accountsFilterHasEquiv !== 'all' || accountsFilterRegistrationType !== 'all') && (
               <span className="text-xs text-gray-500">
                 Showing {filteredAndSortedAccounts.length} of {accounts.length}
               </span>
@@ -239,8 +247,8 @@ const TotalFirm = ({ refreshTrigger }: TotalFirmProps) => {
                       Has Equivalents <SortIcon dir={accountsSort.col === 'has_equivalents' ? accountsSort.dir : null} />
                     </button>
                   </th>
-                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase" title="Taxable account">
-                    Tax
+                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase" title="Registration type: Taxable, Retirement, Trust, or NA">
+                    Reg Type
                   </th>
                   <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
                 </tr>
@@ -285,7 +293,20 @@ const TotalFirm = ({ refreshTrigger }: TotalFirmProps) => {
                       <option value="no">No</option>
                     </select>
                   </th>
-                  <th className="px-4 py-1.5" />
+                  <th className="px-4 py-1.5">
+                    <select
+                      value={accountsFilterRegistrationType}
+                      onChange={(e) => setAccountsFilterRegistrationType(e.target.value as 'all' | 'taxable' | 'retirement' | 'trust' | 'na')}
+                      className="rounded border-gray-300 text-xs py-1 max-w-[100px]"
+                      title="Filter by registration type"
+                    >
+                      <option value="all">All</option>
+                      <option value="taxable">Taxable</option>
+                      <option value="retirement">Retirement</option>
+                      <option value="trust">Trust</option>
+                      <option value="na">NA</option>
+                    </select>
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
@@ -302,14 +323,16 @@ const TotalFirm = ({ refreshTrigger }: TotalFirmProps) => {
                         <span className="text-gray-400">—</span>
                       )}
                     </td>
-                    <td className="px-4 py-2 text-sm text-center" title={row.registration_type ?? ''}>
-                      {(row.registration_type || '').toLowerCase() === 'taxable' ? (
-                        <span className="text-green-600 font-medium">✓</span>
-                      ) : (row.registration_type || '').trim() ? (
-                        <span className="text-gray-400">—</span>
-                      ) : (
-                        <span className="text-gray-500">NA</span>
-                      )}
+                    <td className="px-4 py-2 text-sm text-center" title={row.registration_type ?? 'Not set'}>
+                      {(() => {
+                        const rt = (row.registration_type || '').trim();
+                        if (!rt) return <span className="text-gray-500">NA</span>;
+                        const lower = rt.toLowerCase();
+                        if (lower === 'taxable') return <span className="text-green-600 font-medium">Taxable</span>;
+                        if (lower === 'retirement') return <span className="text-amber-600">Retirement</span>;
+                        if (lower === 'trust') return <span className="text-indigo-600">Trust</span>;
+                        return <span className="text-gray-600">{rt}</span>;
+                      })()}
                     </td>
                     <td className="px-4 py-2 text-sm text-right">
                       <Link

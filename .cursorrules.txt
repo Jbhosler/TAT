@@ -7,7 +7,7 @@
 ## 2. Strict Mathematical Constraints
 - **Precision**: All allocation math must use 0.1% (0.001) decimal precision.
 - **The Waterfall**: You MUST follow the liquidation hierarchy: Grade 2 (Poor Match) -> Grade 1 (Close Match) -> Grade 0 (Exact Match).
-- **Drift Logic**: Never rebalance to the midpoint on the "Sell" side. Sell ONLY until the asset class hits the **Upper Drift Limit** (Target % + Drift %).
+- **Drift Logic**: Trades move toward target. Sell overweight classes down to **Target %** (not just to Upper Drift Limit). Buy underweight classes up to **Target %**.
 - **Buy Logic**: Always buy the designated **Model Ticker** to reach the **Target % (Midpoint)**.
 - **Residuals**: Any unallocated value must be swept into a `CASH` asset class.
 

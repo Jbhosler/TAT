@@ -105,6 +105,27 @@ class StrategyPosition(Base):
     )
 
 
+class EquivalentMetrics(Base):
+    """Snapshot of ticker characteristics for equivalent review (returns, volatility, drawdown, correlation)."""
+    __tablename__ = "equivalent_metrics"
+
+    equivalent_id = Column(UUID(as_uuid=True), ForeignKey("product_equivalents.id", ondelete="CASCADE"), nullable=False)
+    last_updated = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    leg_ret_1y = Column(Numeric(10, 4), nullable=True)
+    leg_ret_3y = Column(Numeric(10, 4), nullable=True)
+    leg_ret_5y = Column(Numeric(10, 4), nullable=True)
+    leg_vol = Column(Numeric(10, 4), nullable=True)
+    leg_mdd = Column(Numeric(10, 4), nullable=True)
+    mod_ret_1y = Column(Numeric(10, 4), nullable=True)
+    mod_ret_3y = Column(Numeric(10, 4), nullable=True)
+    mod_ret_5y = Column(Numeric(10, 4), nullable=True)
+    mod_vol = Column(Numeric(10, 4), nullable=True)
+    mod_mdd = Column(Numeric(10, 4), nullable=True)
+    correlation_1y = Column(Numeric(10, 4), nullable=True)
+
+    product_equivalent = relationship("ProductEquivalent", back_populates="equivalent_metrics")
+
+
 class ProductEquivalent(Base):
     """Product equivalents - maps legacy tickers to model tickers with grades, buy/sell controls."""
     __tablename__ = "product_equivalents"
@@ -121,6 +142,7 @@ class ProductEquivalent(Base):
     
     # Relationships
     strategy = relationship("Strategy", back_populates="product_equivalents")
+    equivalent_metrics = relationship("EquivalentMetrics", back_populates="product_equivalent", uselist=False, cascade="all, delete-orphan")
     model_ticker_position = relationship(
         "StrategyPosition",
         primaryjoin="and_(ProductEquivalent.strategy_id==StrategyPosition.strategy_id, "
@@ -139,9 +161,11 @@ class Prospect(Base):
     total_value = Column(Numeric(15, 2), nullable=False)
     document_pdf = Column(LargeBinary, nullable=True)
     document_filename = Column(String(255), nullable=True)
+    monitored_account_id = Column(UUID(as_uuid=True), ForeignKey("monitored_accounts.id", ondelete="SET NULL"), nullable=True)
     
     # Relationships
     strategy = relationship("Strategy", back_populates="prospects")
+    monitored_account = relationship("MonitoredAccount", back_populates="linked_prospects", foreign_keys=[monitored_account_id])
     holdings = relationship("ProspectHolding", back_populates="prospect", cascade="all, delete-orphan")
     ticker_mappings = relationship("TickerMapping", back_populates="prospect", cascade="all, delete-orphan")
     transition_results = relationship("TransitionResult", back_populates="prospect", cascade="all, delete-orphan")
@@ -230,9 +254,11 @@ class MonitoredAccount(Base):
     firm = Column(String(255), nullable=True)
     advisor = Column(String(255), nullable=True)
     account_display = Column(String(255), nullable=True)  # Partial/masked account (e.g. ****5038)
+    registration_type = Column(String(50), nullable=True)  # Retirement, Taxable, Trust
 
     strategy = relationship("Strategy", back_populates="monitored_accounts")
     snapshots = relationship("AccountSnapshot", back_populates="monitored_account", cascade="all, delete-orphan")
+    linked_prospects = relationship("Prospect", back_populates="monitored_account", foreign_keys="Prospect.monitored_account_id")
 
 
 class AccountSnapshot(Base):

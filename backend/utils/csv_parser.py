@@ -455,3 +455,182 @@ def parse_aggregated_holdings_csv(csv_content: str) -> List[Dict[str, Any]]:
         })
 
     return result
+
+
+def _extract_last4(s: str) -> str:
+    """Extract last 4 digits from account number (e.g. xxx-5290 -> 5290, ****5038 -> 5038)."""
+    if not s or not isinstance(s, str):
+        return ""
+    digits = "".join(c for c in s if c.isdigit())
+    return digits[-4:] if len(digits) >= 4 else digits
+
+
+def _format_account_for_hash(account_number: str, account_id: str) -> str:
+    """
+    Format account to match aggregated holdings (*****1234 or ****1234).
+    Uses Account Number if available; otherwise last 4 from Account ID.
+    Aggregated file uses both 4 and 5 asterisks - we default to 5.
+    """
+    last4 = _extract_last4(account_number) or _extract_last4(account_id)
+    if not last4:
+        return account_id or account_number or ""
+    return "*****" + last4
+
+
+def _account_variants_for_hash(account_number: str, account_id: str) -> List[str]:
+    """
+    Return account value variants to try for synthetic_id matching.
+    Aggregated holdings uses both *****1234 (5 asterisks) and ****1234 (4 asterisks).
+    """
+    last4 = _extract_last4(account_number) or _extract_last4(account_id)
+    if not last4:
+        base = account_id or account_number or ""
+        return [base] if base else []
+    return ["*****" + last4, "****" + last4]
+
+
+def _format_advisor_for_hash(advisor: str) -> str:
+    """
+    Convert 'First Last' or 'First LAST' to 'Last, First' to match aggregated holdings.
+    """
+    if not advisor or not isinstance(advisor, str):
+        return advisor or ""
+    parts = advisor.strip().split()
+    if len(parts) <= 1:
+        return advisor.strip()
+    first = parts[0]
+    last = " ".join(parts[1:])
+    return f"{last}, {first}"
+
+
+# Registration Firm (full name) -> Aggregated Firm (abbreviated)
+_REGISTRATION_FIRM_TO_AGGREGATED: Dict[str, str] = {
+    "cetera wealth services, llc": "Cetera Wealth Svcs",
+    "cetera wealth services": "Cetera Wealth Svcs",
+    "cetera financial specialists llc": "Specialists",
+    "cetera financial specialists": "Specialists",
+    "cetera investment services llc": "Institutions",
+    "cetera investment services": "Institutions",
+    "cetera advisors llc": "Advisors",
+    "cetera advisors": "Advisors",
+}
+
+
+def _format_firm_for_hash(firm: str) -> str:
+    """
+    Normalize firm name to match aggregated holdings format.
+    """
+    if not firm or not isinstance(firm, str):
+        return firm or ""
+    key = firm.strip().lower()
+    return _REGISTRATION_FIRM_TO_AGGREGATED.get(key, firm.strip())
+
+
+def _registration_type_header_indices(headers: List[str]) -> Dict[str, int]:
+    """
+    Return column index for registration-type CSV. Matches columns used for synthetic_id
+    plus Registration Type. Supports: Adviser, Account, Product/Program/Model, Firm, Enterprise,
+    Account Number, Registration Type.
+    """
+    normalized = [_normalize_header(h).strip().lower() for h in headers]
+    result: Dict[str, Any] = {
+        "account": None, "advisor": None, "model": None, "firm": None, "enterprise": None,
+        "account_number": None, "registration_type": None,
+    }
+    name_to_key = [
+        ("account", ["account"]),
+        ("advisor", ["advisor", "adviser"]),
+        ("model", ["model", "product", "program"]),
+        ("firm", ["firm"]),
+        ("enterprise", ["enterprise"]),
+        ("account_number", ["account number", "accountnumber"]),
+        ("registration_type", ["registration type", "registration", "reg type", "regtype"]),
+    ]
+    for i, norm in enumerate(normalized):
+        if not norm:
+            continue
+        for key, aliases in name_to_key:
+            if result[key] is not None:
+                continue
+            for al in aliases:
+                if al in norm or norm.startswith(al) or (al.replace(" ", "") in norm.replace(" ", "")):
+                    result[key] = i
+                    break
+    return {k: (v if v is not None else -1) for k, v in result.items()}
+
+
+def parse_registration_type_csv(csv_content: str) -> List[Dict[str, Any]]:
+    """
+    Parse registration type CSV for updating monitored accounts.
+
+    Expects columns that match the synthetic_id components: Account, Adviser, Product/Model, Firm, Enterprise,
+    plus Registration Type (Retirement, Taxable, Trust). Uses same hash as aggregated holdings:
+    synthetic_id = hash(account|advisor|model|firm|enterprise).
+
+    Returns:
+        List of {synthetic_id, registration_type} for rows with valid registration_type.
+    """
+    csv_content = (csv_content or "").strip().strip("\ufeff")
+    csv_content = csv_content.replace("\r\n", "\n").replace("\r", "\n")
+    if not csv_content:
+        return []
+
+    lines = list(csv.reader(io.StringIO(csv_content)))
+    if not lines:
+        return []
+
+    headers = lines[0]
+    indices = _registration_type_header_indices(headers)
+
+    valid_types = {"retirement", "taxable", "trust"}
+    result: List[Dict[str, Any]] = []
+
+    def _cell(row: List[str], key: str) -> str:
+        idx = indices.get(key, -1)
+        if idx < 0 or idx >= len(row):
+            return ""
+        return (row[idx] or "").strip()
+
+    for row in lines[1:]:
+        if len(row) < 2 or not any(str(v).strip() for v in row):
+            continue
+        reg_type_raw = _cell(row, "registration_type")
+        if not reg_type_raw:
+            continue
+        reg_type_norm = reg_type_raw.strip().lower()
+        if reg_type_norm not in valid_types:
+            continue
+        reg_type = reg_type_raw.strip()
+        account_id = _cell(row, "account")
+        account_number = _cell(row, "account_number")
+        advisor_raw = _cell(row, "advisor")
+        model = _cell(row, "model")
+        firm_raw = _cell(row, "firm")
+        enterprise = _cell(row, "enterprise")
+
+        # Transform to match aggregated holdings format for synthetic_id
+        advisor = _format_advisor_for_hash(advisor_raw)
+        firm = _format_firm_for_hash(firm_raw)
+        last4 = _extract_last4(account_number) or _extract_last4(account_id)
+        account_variants = _account_variants_for_hash(account_number, account_id)
+        if not account_variants:
+            account_variants = [account_id or account_number or ""]
+
+        # Try all account formats (***** and ****) - aggregated uses both
+        synthetic_id_candidates = [
+            _synthetic_id(acc, advisor, model, firm, enterprise)
+            for acc in account_variants
+        ]
+        result.append({
+            "synthetic_id": synthetic_id_candidates[0],
+            "synthetic_id_candidates": synthetic_id_candidates,
+            "registration_type": reg_type,
+            "advisor": advisor,
+            "model": model,
+            "firm": firm,
+            "enterprise": enterprise,
+            "last4": last4,
+        })
+
+    logger.info("Registration type CSV: %s rows with valid registration_type", len(result))
+    return result

@@ -185,7 +185,7 @@ const StrategyEditor = () => {
     'US Small Cap', 'International Developed', 'Emerging Markets', 'Fixed Income',
     'Emg Bond LC', 'Emg Bond Hedged', 'ST Corp', 'IT Corp', 'LT Corp', 'ST Govt', 'IT Govt', 'LT Govt',
     'Tactical Cash', 'Ultra ST Bond', 'Aggregate', 'Mortgage Backed', 'Inflation Protection',
-    'ST High Yield', 'High Yield', 'Private Credit', 'International Bond',
+    'ST High Yield', 'High Yield', 'Private Credit', 'International Bond', 'Cash',
   ];
 
   return (
@@ -287,7 +287,16 @@ const StrategyEditor = () => {
                 <select
                   className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
                   value={pos.asset_class}
-                  onChange={(e) => handlePositionChange(index, 'asset_class', e.target.value)}
+                  onChange={(e) => {
+                    const ac = e.target.value;
+                    const updated = [...positions];
+                    updated[index] = { ...updated[index], asset_class: ac };
+                    if (ac === 'Cash' && !String(updated[index].model_ticker).trim()) {
+                      updated[index].model_ticker = 'Cash';
+                    }
+                    setPositions(updated);
+                    setValidationErrors([]);
+                  }}
                 >
                   {assetClassesFallback.map(ac => (
                     <option key={ac} value={ac}>{ac}</option>

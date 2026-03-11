@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, ChangeEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { prospectsAPI } from '../services/api';
 
@@ -11,11 +11,27 @@ interface ProspectScenario {
   created_at: string;
   has_result: boolean;
   has_document?: boolean;
+  monitored_account_id?: string | null;
+  linked_account_name?: string | null;
+}
+
+interface LinkableAccount {
+  id: string;
+  synthetic_id: string;
+  friendly_name: string | null;
+  account_display: string | null;
+  advisor: string | null;
 }
 
 const ScenariosPage = () => {
   const [scenarios, setScenarios] = useState<ProspectScenario[]>([]);
   const [loading, setLoading] = useState(true);
+  const [linkDropdownProspectId, setLinkDropdownProspectId] = useState<string | null>(null);
+  const [linkableAccounts, setLinkableAccounts] = useState<LinkableAccount[]>([]);
+  const [linkLoading, setLinkLoading] = useState(false);
+  const [uploadingDocId, setUploadingDocId] = useState<string | null>(null);
+  const [pendingUploadProspectId, setPendingUploadProspectId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadScenarios();
@@ -48,6 +64,32 @@ const ScenariosPage = () => {
   const formatDollars = (v: number) =>
     Number(v).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
+  const triggerFileUpload = (prospectId: string) => {
+    setPendingUploadProspectId(prospectId);
+    setTimeout(() => fileInputRef.current?.click(), 0);
+  };
+
+  const handleFileSelected = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    const prospectId = pendingUploadProspectId;
+    setPendingUploadProspectId(null);
+    e.target.value = '';
+    if (!file || !prospectId) return;
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      alert('Please select a PDF file.');
+      return;
+    }
+    setUploadingDocId(prospectId);
+    try {
+      await prospectsAPI.uploadDocument(prospectId, file);
+      loadScenarios();
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Could not upload document.');
+    } finally {
+      setUploadingDocId(null);
+    }
+  };
+
   const handleViewPdf = async (id: string) => {
     try {
       const res = await prospectsAPI.getDocument(id);
@@ -55,6 +97,41 @@ const ScenariosPage = () => {
       window.open(url, '_blank', 'noopener');
     } catch {
       alert('Could not load PDF.');
+    }
+  };
+
+  const openLinkDropdown = async (prospectId: string) => {
+    setLinkDropdownProspectId(prospectId);
+    setLinkLoading(true);
+    try {
+      const res = await prospectsAPI.getLinkableAccounts(prospectId);
+      setLinkableAccounts(res.data || []);
+    } catch {
+      setLinkableAccounts([]);
+    } finally {
+      setLinkLoading(false);
+    }
+  };
+
+  const handleLinkAccount = async (prospectId: string, accountId: string | null) => {
+    try {
+      await prospectsAPI.linkAccount(prospectId, accountId);
+      setLinkDropdownProspectId(null);
+      loadScenarios();
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Could not update link.');
+    }
+  };
+
+  const handleDelete = async (id: string, name: string) => {
+    if (!window.confirm(`Delete scenario "${name}"? This will remove all holdings, mappings, and results. This cannot be undone.`)) {
+      return;
+    }
+    try {
+      await prospectsAPI.delete(id);
+      loadScenarios();
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Could not delete scenario.');
     }
   };
 
@@ -127,6 +204,13 @@ const ScenariosPage = () => {
           </p>
         </div>
 
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,application/pdf"
+          className="hidden"
+          onChange={handleFileSelected}
+        />
         {loading ? (
           <div className="bg-white shadow rounded-lg p-8 text-center text-gray-500">
             Loading scenarios…
@@ -158,6 +242,9 @@ const ScenariosPage = () => {
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Document
                   </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Linked account
+                  </th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Actions
                   </th>
@@ -186,21 +273,90 @@ const ScenariosPage = () => {
                       )}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm">
-                      {s.has_document ? (
+                      <span className="inline-flex items-center gap-2">
+                        {s.has_document ? (
+                          <button
+                            type="button"
+                            onClick={() => handleViewPdf(s.id)}
+                            className="text-indigo-600 hover:text-indigo-800 font-medium"
+                          >
+                            View PDF
+                          </button>
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
+                        {uploadingDocId === s.id ? (
+                          <span className="text-gray-500 text-xs">Uploading…</span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => triggerFileUpload(s.id)}
+                            className="text-indigo-600 hover:text-indigo-800 text-xs"
+                          >
+                            {s.has_document ? 'Replace' : 'Add file'}
+                          </button>
+                        )}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm">
+                      {linkDropdownProspectId === s.id ? (
+                        <div className="relative">
+                          <select
+                            className="block w-48 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                            value=""
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '__unlink__') {
+                                handleLinkAccount(s.id, null);
+                              } else if (val) {
+                                handleLinkAccount(s.id, val);
+                              }
+                            }}
+                            onBlur={() => setTimeout(() => setLinkDropdownProspectId(null), 150)}
+                            autoFocus
+                          >
+                            <option value="">Select account…</option>
+                            <option value="__unlink__">
+                              {s.linked_account_name ? '— Unlink —' : '— No link —'}
+                            </option>
+                            {linkLoading ? (
+                              <option disabled>Loading…</option>
+                            ) : linkableAccounts.length === 0 ? (
+                              <option disabled>No accounts with same strategy</option>
+                            ) : (
+                              linkableAccounts.map((acc) => (
+                                <option key={acc.id} value={acc.id}>
+                                  {acc.friendly_name || acc.synthetic_id}
+                                  {acc.account_display ? ` (${acc.account_display})` : ''}
+                                </option>
+                              ))
+                            )}
+                          </select>
+                        </div>
+                      ) : s.linked_account_name ? (
+                        <span className="inline-flex items-center gap-1">
+                          <span className="text-gray-700">{s.linked_account_name}</span>
+                          <button
+                            type="button"
+                            onClick={() => openLinkDropdown(s.id)}
+                            className="text-indigo-600 hover:text-indigo-800 text-xs"
+                          >
+                            Change
+                          </button>
+                        </span>
+                      ) : (
                         <button
                           type="button"
-                          onClick={() => handleViewPdf(s.id)}
+                          onClick={() => openLinkDropdown(s.id)}
                           className="text-indigo-600 hover:text-indigo-800 font-medium"
                         >
-                          View PDF
+                          Link to account
                         </button>
-                      ) : (
-                        <span className="text-gray-400">—</span>
                       )}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-right">
                       {s.has_result ? (
-                        <span className="inline-flex gap-2">
+                        <span className="inline-flex gap-2 items-center">
                           <button
                             type="button"
                             onClick={() => handleDownloadReportPdf(s.id)}
@@ -215,14 +371,32 @@ const ScenariosPage = () => {
                           >
                             View results
                           </Link>
+                          <span className="text-gray-300">|</span>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(s.id, s.name)}
+                            className="text-red-600 hover:text-red-800 font-medium"
+                          >
+                            Delete
+                          </button>
                         </span>
                       ) : (
-                        <Link
-                          to="/dashboard"
-                          className="text-gray-500 hover:text-gray-700"
-                        >
-                          Run in Dashboard
-                        </Link>
+                        <span className="inline-flex gap-2 items-center">
+                          <Link
+                            to="/dashboard"
+                            className="text-gray-500 hover:text-gray-700"
+                          >
+                            Run in Dashboard
+                          </Link>
+                          <span className="text-gray-300">|</span>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(s.id, s.name)}
+                            className="text-red-600 hover:text-red-800 font-medium"
+                          >
+                            Delete
+                          </button>
+                        </span>
                       )}
                     </td>
                   </tr>

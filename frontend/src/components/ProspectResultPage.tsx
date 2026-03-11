@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, ChangeEvent } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { prospectsAPI } from '../services/api';
 import TaxSummary from './TaxSummary';
@@ -9,6 +9,8 @@ const ProspectResultPage = () => {
   const [hasDocument, setHasDocument] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [uploadingDoc, setUploadingDoc] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (id) {
@@ -40,6 +42,29 @@ const ProspectResultPage = () => {
       setHasDocument(Boolean(res.data?.has_document));
     } catch {
       setHasDocument(false);
+    }
+  };
+
+  const triggerFileUpload = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelected = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !id) return;
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      alert('Please select a PDF file.');
+      return;
+    }
+    setUploadingDoc(true);
+    try {
+      await prospectsAPI.uploadDocument(id, file);
+      setHasDocument(true);
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Could not upload document.');
+    } finally {
+      setUploadingDoc(false);
     }
   };
 
@@ -131,6 +156,13 @@ const ProspectResultPage = () => {
       </nav>
 
       <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,application/pdf"
+          className="hidden"
+          onChange={handleFileSelected}
+        />
         <div className="mb-4 flex flex-wrap gap-3 items-center">
           <Link to="/scenarios" className="text-sm text-indigo-600 hover:text-indigo-800">
             ← Back to Scenarios
@@ -145,6 +177,17 @@ const ProspectResultPage = () => {
               className="text-sm text-indigo-600 hover:text-indigo-800"
             >
               View PDF
+            </button>
+          )}
+          {uploadingDoc ? (
+            <span className="text-sm text-gray-500">Uploading…</span>
+          ) : (
+            <button
+              type="button"
+              onClick={triggerFileUpload}
+              className="text-sm text-indigo-600 hover:text-indigo-800"
+            >
+              {hasDocument ? 'Replace document' : 'Add document'}
             </button>
           )}
         </div>

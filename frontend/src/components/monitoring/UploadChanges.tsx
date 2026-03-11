@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { monitoringAPI } from '../../services/api';
+import HoldingsComparisonModal from './HoldingsComparisonModal';
 
 type AccountChangeItem = {
   id: string;
@@ -45,6 +46,7 @@ type UploadChangesProps = {
 const UploadChanges = ({ refreshTrigger }: UploadChangesProps) => {
   const [data, setData] = useState<IngestChanges | null>(null);
   const [loading, setLoading] = useState(true);
+  const [holdingsModalAccount, setHoldingsModalAccount] = useState<AccountChangeItem | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -93,11 +95,12 @@ const UploadChanges = ({ refreshTrigger }: UploadChangesProps) => {
     );
   }
 
-  const AccountTable = ({ rows, showPrior, showCurrent, showChange }: {
+  const AccountTable = ({ rows, showPrior, showCurrent, showChange, onViewHoldingsComparison }: {
     rows: AccountChangeItem[];
     showPrior?: boolean;
     showCurrent?: boolean;
     showChange?: boolean;
+    onViewHoldingsComparison?: (row: AccountChangeItem) => void;
   }) => (
     <table className="min-w-full divide-y divide-gray-200">
       <thead className="bg-gray-50">
@@ -125,9 +128,19 @@ const UploadChanges = ({ refreshTrigger }: UploadChangesProps) => {
               </td>
             )}
             <td className="px-4 py-2 text-sm text-right">
-              <Link to={`/monitoring/account/${r.id}`} className="text-indigo-600 hover:text-indigo-800 font-medium">
-                View
-              </Link>
+              {onViewHoldingsComparison ? (
+                <button
+                  type="button"
+                  onClick={() => onViewHoldingsComparison(r)}
+                  className="text-indigo-600 hover:text-indigo-800 font-medium"
+                >
+                  View
+                </button>
+              ) : (
+                <Link to={`/monitoring/account/${r.id}`} className="text-indigo-600 hover:text-indigo-800 font-medium">
+                  View
+                </Link>
+              )}
             </td>
           </tr>
         ))}
@@ -266,9 +279,24 @@ const UploadChanges = ({ refreshTrigger }: UploadChangesProps) => {
           <h3 className="text-lg font-semibold text-gray-900 mb-2">Holdings Changes ({data.accounts_with_holdings_changes.length})</h3>
           <p className="text-sm text-gray-500 mb-4">Accounts with new or removed tickers in holdings.</p>
           <div className="overflow-x-auto">
-            <AccountTable rows={data.accounts_with_holdings_changes} showPrior showCurrent />
+            <AccountTable
+              rows={data.accounts_with_holdings_changes}
+              showPrior
+              showCurrent
+              onViewHoldingsComparison={(r) => setHoldingsModalAccount(r)}
+            />
           </div>
         </div>
+      )}
+
+      {holdingsModalAccount && data && (
+        <HoldingsComparisonModal
+          accountId={holdingsModalAccount.id}
+          accountLabel={[holdingsModalAccount.advisor, holdingsModalAccount.partial_account_number ?? holdingsModalAccount.synthetic_id.slice(0, 8) + '…'].filter(Boolean).join(' — ')}
+          priorDate={data.prior_date ? String(data.prior_date) : null}
+          currentDate={data.current_date ? String(data.current_date) : null}
+          onClose={() => setHoldingsModalAccount(null)}
+        />
       )}
 
       {data.new_accounts.length === 0 &&
