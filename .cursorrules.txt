@@ -12,7 +12,7 @@
 - **Residuals**: Any unallocated value must be swept into a `CASH` asset class.
 
 ## 3. Data Schema & Domain
-- **Asset Classes**: You are restricted to: US Large Core, US Large Growth, US Large Value, US Midcap Growth, US Midcap Value, US Small Cap, International Developed, Emerging Markets, Fixed Income.
+- **Asset Classes**: Defined in `AssetClass` enum (`backend/api/models/database.py`): equity (US Large Core through Real Estate, including Infrastructure and Options Overlay), fixed income subclasses (Emg Bond LC through Securitized, plus legacy Fixed Income), and Cash.
 - **Exclusions**: Automatically identify Common Stocks (Individual Holdings) and move them to a "Side-Pocket" (Display only, exclude from math).
 
 ## 4. Admin & Mapping Requirements (Option C)

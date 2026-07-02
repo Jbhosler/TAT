@@ -2,6 +2,8 @@
 
 This guide will help you deploy the Tax-Aware Transition Tool to Google Cloud.
 
+**Looking for older diagnostic or one-off fix notes?** See [TROUBLESHOOTING-INDEX.md](TROUBLESHOOTING-INDEX.md) for a map of this folder (canonical guides vs historical incident docs).
+
 ## Prerequisites
 
 1. Google Cloud SDK installed and configured
@@ -62,12 +64,12 @@ This will:
 
 ### 5. Run Database Migrations
 
-After the backend is deployed, you'll need to run database migrations. You can do this by:
+After the backend is deployed, apply schema SQL:
 
-1. Connecting to the Cloud SQL instance
-2. Running the SQL schema creation scripts
+1. **New database:** Run `cloud/init-db.sql` (or `init-db-safe.sql` for a clean reinstall).
+2. **Existing database:** Run any incremental `cloud/add-*.sql` files you have not applied yet.
 
-Or create a migration job that runs Alembic migrations.
+Use Cloud Shell and `psql` via `gcloud sql connect`, or the scripts in `cloud/` (see `DB-MIGRATION-CLOUD-SHELL.md`). There is no Alembic migration chain checked into this repo; the API also runs SQLAlchemy `create_all` on startup for ORM tables, but enums and one-off columns still require the SQL files where applicable.
 
 ### 6. Deploy Frontend
 
@@ -82,6 +84,16 @@ This will:
 - Configure public access
 - Set up website hosting
 
+### 7. Deploy Auour Portal (optional hub app)
+
+From the repo root on Windows (PowerShell):
+
+```powershell
+./cloud/deploy-portal-only.ps1
+```
+
+Deploys `portal/` to bucket `gs://auour-portal-tax-aware-transition-tool` and prints the public URL.
+
 ## Environment Variables
 
 The backend will use these environment variables (set via Cloud Run):
@@ -95,13 +107,7 @@ The backend will use these environment variables (set via Cloud Run):
 
 ## Updating the Frontend API URL
 
-After deployment, update `frontend/src/services/api.ts` to point to your Cloud Run backend URL:
-
-```typescript
-const API_BASE_URL = 'https://tat-backend-XXXXX.a.run.app';
-```
-
-Then rebuild and redeploy the frontend.
+Set `VITE_API_URL` to your Cloud Run URL when building the frontend (`export VITE_API_URL=...` then `npm run build` in `frontend/`), or adjust the production fallback in `frontend/src/services/api.ts`. Rebuild and redeploy the static assets afterward.
 
 ## Troubleshooting
 

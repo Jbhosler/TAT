@@ -8,9 +8,17 @@ from uuid import UUID
 from collections import defaultdict
 from backend.database.connection import get_db
 from backend.api.models.database import (
-    AssetClass, MonitoredAccount, ProductEquivalent, Strategy, StrategyPosition
+    AssetClass,
+    AuthorizedUser,
+    MonitoredAccount,
+    ProductEquivalent,
+    Strategy,
+    StrategyPosition,
 )
 from backend.api.models.schemas import (
+    AuthorizedUserCreateRequest,
+    AuthorizedUserResponse,
+    AuthorizedUserUpdateRequest,
     ProductEquivalentCreate,
     ProductEquivalentResponse,
     ProductEquivalentUpdate,
@@ -24,8 +32,9 @@ from backend.api.models.schemas import (
     SanityCheckPreflightRequest,
 )
 from backend.utils.csv_parser import parse_product_equivalents_csv, parse_registration_type_csv
+from backend.api.deps import CurrentUser, require_admin, require_super_admin
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_admin)])
 
 
 def _run_sanity_checks(
@@ -236,10 +245,16 @@ async def upload_product_equivalents(
             ProductEquivalent.strategy_id == strategy_id
         ).delete()
 
-        # Add new equivalents, preserving grades when CSV has no grade and we had one
+        # Add new equivalents, preserving grades when CSV has no grade and we had one.
+        # Duplicate (legacy, model) pairs in the CSV are skipped (first row wins),
+        # so downstream grade resolution is unambiguous.
+        seen_pairs: set = set()
         for equiv_data in equivalents_data:
             csv_grade = equiv_data.get('grade')
             key = (equiv_data['legacy_ticker'], equiv_data['model_ticker'])
+            if key in seen_pairs:
+                continue
+            seen_pairs.add(key)
             grade = csv_grade if csv_grade is not None else grade_lookup.get(key)
 
             db_equiv = ProductEquivalent(
@@ -256,7 +271,7 @@ async def upload_product_equivalents(
             db.add(db_equiv)
 
         db.commit()
-        return {"message": "Product equivalents uploaded successfully", "count": len(equivalents_data)}
+        return {"message": "Product equivalents uploaded successfully", "count": len(seen_pairs)}
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
@@ -415,6 +430,91 @@ async def replace_model_ticker(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/authorized-users",
+    response_model=List[AuthorizedUserResponse],
+    dependencies=[Depends(require_super_admin)],
+)
+async def list_authorized_users(db: Session = Depends(get_db)):
+    """List authorized users."""
+    users = db.query(AuthorizedUser).order_by(AuthorizedUser.created_at.desc()).all()
+    return [AuthorizedUserResponse.model_validate(user) for user in users]
+
+
+@router.post(
+    "/authorized-users",
+    response_model=AuthorizedUserResponse,
+    dependencies=[Depends(require_super_admin)],
+)
+async def create_authorized_user(
+    request: AuthorizedUserCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: CurrentUser = Depends(require_super_admin),
+):
+    """Create an authorized user."""
+    existing = db.query(AuthorizedUser).filter(AuthorizedUser.email == request.email).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Email already exists")
+
+    user = AuthorizedUser(
+        email=request.email,
+        display_name=request.display_name,
+        role=request.role,
+        is_active=True,
+        added_by=current_user["email"],
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return AuthorizedUserResponse.model_validate(user)
+
+
+@router.patch(
+    "/authorized-users/{email}",
+    response_model=AuthorizedUserResponse,
+    dependencies=[Depends(require_super_admin)],
+)
+async def update_authorized_user(
+    email: str,
+    request: AuthorizedUserUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    """Update role/display_name/active status for an authorized user."""
+    email_normalized = email.strip().lower()
+    user = db.query(AuthorizedUser).filter(AuthorizedUser.email == email_normalized).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Authorized user not found")
+
+    if request.display_name is not None:
+        user.display_name = request.display_name
+    if request.role is not None:
+        user.role = request.role
+    if request.is_active is not None:
+        user.is_active = request.is_active
+
+    db.commit()
+    db.refresh(user)
+    return AuthorizedUserResponse.model_validate(user)
+
+
+@router.delete(
+    "/authorized-users/{email}",
+    response_model=AuthorizedUserResponse,
+    dependencies=[Depends(require_super_admin)],
+)
+async def deactivate_authorized_user(email: str, db: Session = Depends(get_db)):
+    """Soft-delete (deactivate) an authorized user."""
+    email_normalized = email.strip().lower()
+    user = db.query(AuthorizedUser).filter(AuthorizedUser.email == email_normalized).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Authorized user not found")
+
+    user.is_active = False
+    db.commit()
+    db.refresh(user)
+    return AuthorizedUserResponse.model_validate(user)
 
 
 @router.post("/resolve-conflict")

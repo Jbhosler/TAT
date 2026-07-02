@@ -18,16 +18,27 @@ A cloud-native portfolio transition engine for Auour Investments that maintains 
 - **Bulk Upload**: CSV ingestion to update entire strategy models
 - **Asset Class Mapping**: Map Model Tickers to asset classes
 - **Product Equivalents**: Upload/manage GE_Alt.csv files per strategy
+- **Registration type upload**: CSV used to enrich monitored accounts (admin UI)
 
 ### Prospect Transition Engine
-- **Automatic Classification**: Identifies individual stocks (side-pocket) vs funds
+- **Holdings classification**: Review holdings and mark side pockets (individual stocks) vs funds before mapping
 - **Option C Mapping**: Manual mapping wizard for unmapped tickers
 - **Multi-Asset Splits**: Support for funds that map to multiple Model Tickers
+- **Documents & reports**: Optional prospect document upload; transition PDF report download
+- **Link to monitoring**: Attach a prospect to a monitored account when both exist in the system
 - **Tax-Aware Rebalancing**: 
   - Grade hierarchy: Grade 2 → Grade 1 → Grade 0
   - Sell to Upper Drift Limit (not midpoint)
   - Greedy elimination: Prefer 100% liquidation when possible
   - 0.1% precision for all calculations
+
+### Monitoring (firm-wide)
+- Aggregated holdings CSV ingest, checksum-based skip, optional force recompute
+- Strategy name mapping (external model → internal strategy), discovery models
+- Account snapshots, heat map / rollup scores, concentration and “top offenders” views
+- Equivalent usage (including unused equivalents), unmapped tickers, by-adviser breakdowns
+- Equivalent Review (legacy vs model metrics; Alpha Vantage refresh when configured)
+- Registration type CSV upload for monitored accounts
 
 ### Dashboard
 - Side-by-side Current vs Proposed portfolio comparison
@@ -55,16 +66,11 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-3. Configure environment:
-```bash
-cp .env.example .env.local
-# Edit .env.local with your database credentials
-```
+3. Configure environment variables (see `.env.example` for names and defaults). The backend reads `os.environ` only; it does not load a `.env` file automatically—export variables in your shell, use your IDE’s run configuration, or inject them the same way Cloud Run does.
 
-4. Run database migrations (when Alembic is configured):
-```bash
-alembic upgrade head
-```
+4. Database schema:
+   - **Cloud / shared DB:** Apply SQL in `cloud/` (start with `init-db.sql` or `init-db-safe.sql`, then any incremental `add-*.sql` your instance needs). See `cloud/DB-MIGRATION-CLOUD-SHELL.md`.
+   - **Local dev:** On API startup, SQLAlchemy `create_all` ensures ORM tables exist against your configured database (use the same scripts if you need enums, triggers, or columns not covered by the models).
 
 5. Start the API server:
 ```bash
@@ -88,6 +94,8 @@ npm install
 npm run dev
 ```
 
+By default the dev server calls `http://localhost:8000`. For production builds, set `VITE_API_URL` to your Cloud Run URL (see root `DEPLOYMENT.md`).
+
 ## Google Cloud Deployment
 
 ### Cloud SQL Setup
@@ -106,6 +114,16 @@ npm run dev
 2. Upload `dist/` to Cloud Storage bucket
 3. Configure Cloud CDN for static assets
 
+See `DEPLOYMENT.md`, `QUICK_START.md`, and `cloud/TROUBLESHOOTING-INDEX.md` for fuller steps and links to historical diagnostic notes.
+
+## Developer Documentation
+
+| Document | Contents |
+|----------|---------|
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System overview, technology stack, backend/frontend architecture, core algorithms (rebalancer, blend, monitor engine), auth, deployment |
+| [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) | Every API endpoint — method, path, request/response shapes, query parameters |
+| [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) | Every database table, column types, relationships, enums, and migration history |
+
 ## Testing
 
 Run unit tests:
@@ -118,13 +136,15 @@ pytest tests/
 ```
 TAT/
 ├── backend/
-│   ├── logic/           # Pure rebalancing math
-│   ├── api/             # FastAPI application
-│   ├── database/        # Database connection and migrations
-│   └── utils/            # CSV parsers, asset classifier
-├── frontend/            # React application
-├── cloud/               # Deployment configurations
-└── tests/                # Unit and integration tests
+│   ├── logic/           # Rebalancing and monitoring rollup math
+│   ├── api/             # FastAPI application and routes
+│   ├── database/        # SQLAlchemy engine/session (Cloud SQL connector or proxy)
+│   ├── services/        # External services (e.g. Alpha Vantage)
+│   └── utils/           # CSV parsers, asset classifier, PDF generation
+├── frontend/            # React (Vite) application
+├── cloud/               # Docker, SQL migrations, deploy scripts (bash and PowerShell)
+├── docs/                # Engineering notes (e.g. monitoring performance plan)
+└── tests/               # Unit and integration tests
 ```
 
 ## License

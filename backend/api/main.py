@@ -10,6 +10,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import logging
 import os
 import sys
+import time
 
 # Configure logging
 logging.basicConfig(
@@ -92,6 +93,41 @@ async def cors_handler(request: Request, call_next):
         error_response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
         error_response.headers["Access-Control-Allow-Headers"] = "*"
         return error_response
+
+
+@app.middleware("http")
+async def request_timing_logger(request: Request, call_next):
+    """Log request timing and payload/response size hints for cost profiling."""
+    start = time.perf_counter()
+    req_bytes = request.headers.get("content-length")
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = round((time.perf_counter() - start) * 1000, 2)
+        logger.exception(
+            "REQ_METRIC method=%s path=%s route=%s status=500 duration_ms=%s req_bytes=%s resp_bytes=%s",
+            request.method,
+            request.url.path,
+            getattr(request.scope.get("route"), "path", request.url.path),
+            duration_ms,
+            req_bytes or "-",
+            "-",
+        )
+        raise
+
+    duration_ms = round((time.perf_counter() - start) * 1000, 2)
+    resp_bytes = response.headers.get("content-length") or "-"
+    logger.info(
+        "REQ_METRIC method=%s path=%s route=%s status=%s duration_ms=%s req_bytes=%s resp_bytes=%s",
+        request.method,
+        request.url.path,
+        getattr(request.scope.get("route"), "path", request.url.path),
+        response.status_code,
+        duration_ms,
+        req_bytes or "-",
+        resp_bytes,
+    )
+    return response
 
 # CORS middleware - MUST be added before routers
 # Allow requests from Cloud Storage and any other origins

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { monitoringAPI } from '../../services/api';
+import { formatIsoDate } from '../../utils/formatIsoDate';
+import { monitoringAccountPath } from '../../utils/monitoringNav';
 
 type Account = {
   id: string;
@@ -15,11 +17,13 @@ type Account = {
 };
 
 type HeatMapProps = {
+  asOfDate?: string | null;
   /** When this changes (e.g. after a new file ingest), heat map data is refetched. */
   refreshTrigger?: string | null;
 };
 
-const HeatMap = ({ refreshTrigger }: HeatMapProps) => {
+const HeatMap = ({ asOfDate, refreshTrigger }: HeatMapProps) => {
+  const [searchParams] = useSearchParams();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
   const [sortBy, setSortBy] = useState<'deviation' | 'value' | 'purity' | 'cash'>('deviation');
@@ -31,7 +35,7 @@ const HeatMap = ({ refreshTrigger }: HeatMapProps) => {
     try {
       // Load accounts; lastIngest is optional (404 if backend not yet deployed with ingest-runs)
       const [accountsRes, lastRes] = await Promise.allSettled([
-        monitoringAPI.listAccounts({ mapped_only: true }),
+        monitoringAPI.listAccounts({ mapped_only: true, ...(asOfDate ? { as_of_date: asOfDate } : {}) }),
         monitoringAPI.lastIngest(),
       ]);
       if (accountsRes.status === 'fulfilled') {
@@ -55,7 +59,7 @@ const HeatMap = ({ refreshTrigger }: HeatMapProps) => {
 
   useEffect(() => {
     loadAccounts();
-  }, [refreshTrigger ?? '']);
+  }, [asOfDate ?? '', refreshTrigger ?? '']);
 
   const sorted = [...accounts].sort((a, b) => {
     let va: number, vb: number;
@@ -75,11 +79,14 @@ const HeatMap = ({ refreshTrigger }: HeatMapProps) => {
     return sortDesc ? vb - va : va - vb;
   });
 
-  const formatDate = (d: string | null) => (d ? new Date(d).toLocaleDateString('en-US') : '—');
   const formatDollars = (v: number | null) =>
     v != null ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) : '—';
   const formatPct = (v: number | null) =>
     v != null ? `${Number(v).toFixed(2)}%` : '—';
+
+  const accountReturnParams = new URLSearchParams(searchParams);
+  accountReturnParams.set('tab', 'heatmap');
+  if (asOfDate) accountReturnParams.set('as_of_date', asOfDate);
 
   return (
     <div className="bg-white shadow rounded-lg p-6">
@@ -169,10 +176,10 @@ const HeatMap = ({ refreshTrigger }: HeatMapProps) => {
                   <td className="px-4 py-2 text-sm text-right font-medium">{formatPct(a.total_deviation_score)}</td>
                   <td className="px-4 py-2 text-sm text-right">{formatPct(a.purity_score)}</td>
                   <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPct(a.cash_pct)}</td>
-                  <td className="px-4 py-2 text-sm text-gray-500">{formatDate(a.as_of_date)}</td>
+                  <td className="px-4 py-2 text-sm text-gray-500">{formatIsoDate(a.as_of_date)}</td>
                   <td className="px-4 py-2 text-sm text-right">
                     <Link
-                      to={`/monitoring/account/${a.id}`}
+                      to={monitoringAccountPath(a.id, accountReturnParams)}
                       className="text-indigo-600 hover:text-indigo-800 font-medium"
                     >
                       View

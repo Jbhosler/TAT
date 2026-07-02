@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { monitoringAPI } from '../../services/api';
+import { monitoringAccountPath, monitoringListPath } from '../../utils/monitoringNav';
 
 type ConcentrationAccountItem = {
   account_id: string;
@@ -14,6 +15,9 @@ const ConcentrationAccountList = () => {
   const { ticker, grade } = useParams<{ ticker: string; grade: string }>();
   const [searchParams] = useSearchParams();
   const asOfDate = searchParams.get('as_of_date') || undefined;
+  const backPath = monitoringListPath(searchParams);
+  const accountReturnParams = new URLSearchParams(searchParams);
+  accountReturnParams.set('tab', 'concentration');
   const [accounts, setAccounts] = useState<ConcentrationAccountItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -60,7 +64,7 @@ const ConcentrationAccountList = () => {
     <div className="space-y-4">
       <div className="flex items-center gap-4">
         <Link
-          to="/monitoring"
+          to={backPath}
           className="text-sm text-indigo-600 hover:text-indigo-800 font-medium"
         >
           ← Back to Monitoring
@@ -102,7 +106,7 @@ const ConcentrationAccountList = () => {
                     <td className="px-4 py-2 text-sm text-right text-gray-700">{Number(row.pct_of_total).toFixed(2)}%</td>
                     <td className="px-4 py-2 text-sm text-right">
                       <Link
-                        to={`/monitoring/account/${row.account_id}`}
+                        to={monitoringAccountPath(row.account_id, accountReturnParams)}
                         className="text-indigo-600 hover:text-indigo-800 font-medium"
                       >
                         View account

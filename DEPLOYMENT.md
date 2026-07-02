@@ -109,14 +109,19 @@ This will:
 
 **Note the backend URL from the output!**
 
-### Step 7: Update Frontend API URL
+### Step 7: Point the frontend at the backend
 
-Edit `frontend/src/services/api.ts`:
+The client uses `VITE_API_URL` when defined; otherwise production builds use the fallback URL in `frontend/src/services/api.ts` (update that fallback only if you rely on it instead of the env var).
 
-```typescript
-const API_BASE_URL = import.meta.env.VITE_API_URL || 
-  'https://tat-backend-XXXXX.a.run.app';  // Replace with your backend URL
+**Recommended:** set the variable when building:
+
+```bash
+cd frontend
+export VITE_API_URL="https://YOUR-BACKEND-URL.a.run.app"
+npm run build
 ```
+
+Then deploy the built `dist/` (e.g. `cloud/deploy-frontend.sh`).
 
 ### Step 8: Deploy Frontend
 
@@ -187,9 +192,9 @@ gcloud projects add-iam-policy-binding tax-aware-transition-tool \
 
 ### Frontend can't reach backend
 
-1. Update `API_BASE_URL` in `frontend/src/services/api.ts`
-2. Rebuild and redeploy frontend
-3. Check CORS settings in backend (should allow all origins for now)
+1. Set `VITE_API_URL` to the Cloud Run URL and rebuild, or update the production fallback in `frontend/src/services/api.ts`
+2. Redeploy the frontend assets
+3. Check CORS: the backend allows listed production domains, Cloud Storage, localhost, and reflects allowed `Origin` headers; see `backend/api/main.py` for `ALLOWED_ORIGINS` and middleware
 
 ### Build failures
 
@@ -249,11 +254,8 @@ cd cloud
 
 ### Update Database Schema
 
-1. Update `cloud/init-db.sql`
-2. Run migrations:
-   ```bash
-   ./run-migrations.sh
-   ```
+1. Add or edit SQL in `cloud/` (prefer a new incremental `add-*.sql` for existing databases; update `init-db.sql` for brand-new installs). See `cloud/DB-MIGRATION-CLOUD-SHELL.md`.
+2. Apply on the instance (e.g. `./run-migrations.sh` for full init, or run the specific `add-*.sql` via `psql` / Cloud Shell).
 
 ## Support
 

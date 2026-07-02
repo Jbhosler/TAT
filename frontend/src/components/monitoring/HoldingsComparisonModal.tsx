@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { monitoringAPI } from '../../services/api';
+import { formatIsoDate } from '../../utils/formatIsoDate';
+import { monitoringAccountPath } from '../../utils/monitoringNav';
 
 type Holding = {
   ticker: string;
@@ -139,12 +141,12 @@ const HoldingsComparisonModal = ({
         <div className="p-6 flex-1 overflow-auto">
           <div className="grid grid-cols-2 gap-6 mb-4">
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-              <h3 className="text-sm font-semibold text-amber-800 mb-1">Prior ({priorDate ? new Date(priorDate).toLocaleDateString('en-US') : '—'})</h3>
+              <h3 className="text-sm font-semibold text-amber-800 mb-1">Prior ({formatIsoDate(priorDate)})</h3>
               <p className="text-lg font-bold text-amber-900">${formatDollars(priorTotal)}</p>
               <p className="text-xs text-amber-700">{priorHoldings.length} holdings</p>
             </div>
             <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-              <h3 className="text-sm font-semibold text-green-800 mb-1">Current ({currentDate ? new Date(currentDate).toLocaleDateString('en-US') : '—'})</h3>
+              <h3 className="text-sm font-semibold text-green-800 mb-1">Current ({formatIsoDate(currentDate)})</h3>
               <p className="text-lg font-bold text-green-900">${formatDollars(currentTotal)}</p>
               <p className="text-xs text-green-700">{currentHoldings.length} holdings</p>
             </div>
@@ -215,7 +217,18 @@ const HoldingsComparisonModal = ({
             </table>
           </div>
           <p className="mt-4 text-sm text-gray-500">
-            <Link to={`/monitoring/account/${accountId}`} className="text-indigo-600 hover:text-indigo-800" onClick={onClose}>
+            <Link
+              to={monitoringAccountPath(
+                accountId,
+                new URLSearchParams({
+                  tab: 'uploadchanges',
+                  ...(currentDate ? { as_of_date: currentDate, current_as_of_date: currentDate } : {}),
+                  ...(priorDate ? { prior_as_of_date: priorDate } : {}),
+                })
+              )}
+              className="text-indigo-600 hover:text-indigo-800"
+              onClick={onClose}
+            >
               View full account page →
             </Link>
           </p>

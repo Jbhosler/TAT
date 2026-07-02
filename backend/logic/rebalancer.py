@@ -4,8 +4,8 @@ Pure Python module with no dependencies on API/UI layers.
 All calculations use Decimal for 0.1% precision.
 """
 from decimal import Decimal, ROUND_HALF_UP
-from typing import List, Dict, Tuple, Optional
-from dataclasses import dataclass
+from typing import List, Dict, Tuple, Optional, Any
+from dataclasses import dataclass, field
 from enum import Enum
 
 
@@ -24,6 +24,9 @@ class AssetClass(str, Enum):
     US_SMALL_CAP = "US Small Cap"
     INTERNATIONAL_DEVELOPED = "International Developed"
     EMERGING_MARKETS = "Emerging Markets"
+    INFRASTRUCTURE = "Infrastructure"
+    OPTIONS_OVERLAY = "Options Overlay"
+    REAL_ESTATE = "Real Estate"
     # Fixed Income (legacy)
     FIXED_INCOME = "Fixed Income"
     # Fixed Income subclasses
@@ -44,6 +47,14 @@ class AssetClass(str, Enum):
     HIGH_YIELD = "High Yield"
     PRIVATE_CREDIT = "Private Credit"
     INTERNATIONAL_BOND = "International Bond"
+    BANK_LOAN = "Bank Loan"
+    SECURITIZED = "Securitized"
+    VARIABLE_RATE_IG = "Variable Rate IG"
+    MBS_FLOATING_RATE = "MBS Floating Rate"
+    CLO_AAA = "CLO-AAA"
+    CLO_BBB = "CLO-BBB"
+    CLO_A = "CLO-A"
+    COMMERCIAL_PAPER = "Commercial Paper"
     # Cash
     CASH = "Cash"
 
@@ -92,6 +103,7 @@ class PreHolding:
     ticker: str
     asset_class: str
     value: Decimal
+    unrealized_gain_loss: Decimal = Decimal("0")
 
 
 @dataclass
@@ -101,6 +113,7 @@ class PostHolding:
     asset_class: str
     value: Decimal
     ticker: Optional[str] = None  # legacy ticker when position is kept from a mapped holding
+    unrealized_gain_loss: Decimal = Decimal("0")
 
 
 @dataclass
@@ -112,6 +125,8 @@ class TransitionResult:
     total_realized_gain_loss: Decimal
     pre_holdings: List[PreHolding]
     post_holdings: List[PostHolding]
+    # Unique legacy→model pairs used for mapped rebalanceable holdings; in_product_equivalents from GE_Alt
+    equivalent_usage: List[Dict[str, Any]] = field(default_factory=list)
 
 
 def round_to_precision(value: Decimal) -> Decimal:
@@ -119,6 +134,12 @@ def round_to_precision(value: Decimal) -> Decimal:
     if not isinstance(value, Decimal):
         value = Decimal(str(value))
     return value.quantize(PRECISION, rounding=ROUND_HALF_UP)
+
+
+def normalize_ticker(ticker: str) -> str:
+    """Canonical form for ticker matching: uppercase, stripped. Custodian exports
+    and GE_Alt files don't always agree on case."""
+    return (ticker or "").strip().upper()
 
 
 def classify_holdings(holdings: List[Holding]) -> Tuple[List[Holding], List[Holding]]:
@@ -147,6 +168,68 @@ def classify_holdings(holdings: List[Holding]) -> Tuple[List[Holding], List[Hold
     return side_pocket, rebalanceable
 
 
+def build_equivalent_usage_rows(
+    mapped_holdings: List[MappedHolding],
+    product_equivalents: Dict[str, Dict[str, int]],
+    manual_mappings: Optional[Dict[str, Dict[str, any]]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    One row per unique (legacy ticker, model ticker, grade) used for mapped rebalanceable holdings.
+
+    in_product_equivalents: exact (legacy, model, grade) exists in GE_Alt for the strategy.
+    mapping_source:
+      - ge_alt: matched the strategy's GE_Alt file
+      - manual: adviser set this mapping on the proposal (Option C)
+      - cash: auto-mapped cash position (not a GE_Alt follow-up item)
+      - not_in_ge_alt: used in the transition but not in GE_Alt (e.g. grade differs from file)
+    """
+    pe_normalized = {normalize_ticker(lt): pe_map for lt, pe_map in product_equivalents.items()}
+    manual_normalized = {
+        normalize_ticker(t): m for t, m in (manual_mappings or {}).items()
+    }
+    seen: set = set()
+    rows: List[Dict[str, Any]] = []
+    for mh in mapped_holdings:
+        key = (mh.ticker, mh.model_ticker, mh.grade)
+        if key in seen:
+            continue
+        seen.add(key)
+        ticker_key = normalize_ticker(mh.ticker)
+        in_pe = False
+        pe_map = pe_normalized.get(ticker_key)
+        if pe_map is not None:
+            if mh.model_ticker in pe_map and pe_map[mh.model_ticker] == mh.grade:
+                in_pe = True
+
+        if mh.asset_class == AssetClass.CASH or ticker_key == "CASH":
+            mapping_source = "cash"
+        elif ticker_key in manual_normalized:
+            mapping_source = "manual"
+        elif in_pe:
+            mapping_source = "ge_alt"
+        else:
+            mapping_source = "not_in_ge_alt"
+
+        rows.append({
+            "legacy_ticker": mh.ticker,
+            "model_ticker": mh.model_ticker,
+            "grade": mh.grade,
+            "in_product_equivalents": in_pe,
+            "mapping_source": mapping_source,
+        })
+    # Proposal-only rows first so reports surface action items at the top.
+    _source_order = {"manual": 0, "not_in_ge_alt": 1, "cash": 2, "ge_alt": 3}
+    rows.sort(
+        key=lambda r: (
+            _source_order.get(r["mapping_source"], 9),
+            r["legacy_ticker"],
+            r["model_ticker"],
+            r["grade"],
+        )
+    )
+    return rows
+
+
 def map_holdings_to_model_tickers(
     holdings: List[Holding],
     product_equivalents: Dict[str, Dict[str, int]],  # {legacy_ticker: {model_ticker: grade}}
@@ -168,10 +251,16 @@ def map_holdings_to_model_tickers(
     mapped = []
     unmapped = []
     
+    # Normalize legacy-ticker keys so matching is case/whitespace-insensitive
+    # (custodian exports and GE_Alt files don't always agree on case).
+    manual_normalized = {normalize_ticker(t): m for t, m in manual_mappings.items()}
+    pe_normalized = {normalize_ticker(t): e for t, e in product_equivalents.items()}
+
     for holding in holdings:
+        ticker_key = normalize_ticker(holding.ticker)
         # Check manual mappings first (Option C - highest priority)
-        if holding.ticker in manual_mappings:
-            mapping = manual_mappings[holding.ticker]
+        if ticker_key in manual_normalized:
+            mapping = manual_normalized[ticker_key]
             
             # Check for multi-asset split
             if mapping.get('dollar_split'):
@@ -179,25 +268,27 @@ def map_holdings_to_model_tickers(
                 dollar_split = mapping['dollar_split']
                 total_split = sum(Decimal(str(v)) for v in dollar_split.values())
                 
-                # Validate split equals holding value
-                if abs(total_split - holding.value) > Decimal('0.01'):
+                # Validate the entire split up front (value matches and every model
+                # ticker exists in the strategy) so a partially-valid split never
+                # ends up both mapped and unmapped (double-counting the holding).
+                if (
+                    holding.value == 0
+                    or abs(total_split - holding.value) > Decimal('0.01')
+                    or any(mt not in strategy_positions for mt in dollar_split)
+                ):
                     unmapped.append(holding)
                     continue
                 
                 # Create mapped holdings for each split
                 for model_ticker, split_value in dollar_split.items():
-                    if model_ticker in strategy_positions:
-                        mapped.append(MappedHolding(
-                            ticker=holding.ticker,
-                            value=Decimal(str(split_value)),
-                            unrealized_gain_loss=holding.unrealized_gain_loss * (Decimal(str(split_value)) / holding.value),
-                            model_ticker=model_ticker,
-                            asset_class=strategy_positions[model_ticker],
-                            grade=mapping.get('grade', 2)
-                        ))
-                    else:
-                        unmapped.append(holding)
-                        break
+                    mapped.append(MappedHolding(
+                        ticker=holding.ticker,
+                        value=Decimal(str(split_value)),
+                        unrealized_gain_loss=holding.unrealized_gain_loss * (Decimal(str(split_value)) / holding.value),
+                        model_ticker=model_ticker,
+                        asset_class=strategy_positions[model_ticker],
+                        grade=mapping.get('grade', 2)
+                    ))
             else:
                 # Single model ticker mapping
                 model_ticker = mapping.get('model_ticker')
@@ -214,26 +305,29 @@ def map_holdings_to_model_tickers(
                     unmapped.append(holding)
         
         # Check product equivalents (GE_Alt.csv)
-        elif holding.ticker in product_equivalents:
-            equiv = product_equivalents[holding.ticker]
-            # Get first model ticker (assuming one-to-one for now)
-            model_ticker = list(equiv.keys())[0] if equiv else None
-            grade = equiv[model_ticker] if model_ticker and model_ticker in equiv else 2
+        elif ticker_key in pe_normalized:
+            equiv = pe_normalized[ticker_key]
+            # Use the first equivalent that exists in the strategy (insertion
+            # order favors higher-weight strategies in blends).
+            model_ticker = next(
+                (mt for mt in equiv if mt in strategy_positions),
+                None
+            )
             
-            if model_ticker and model_ticker in strategy_positions:
+            if model_ticker:
                 mapped.append(MappedHolding(
                     ticker=holding.ticker,
                     value=holding.value,
                     unrealized_gain_loss=holding.unrealized_gain_loss,
                     model_ticker=model_ticker,
                     asset_class=strategy_positions[model_ticker],
-                    grade=grade
+                    grade=equiv[model_ticker]
                 ))
             else:
                 unmapped.append(holding)
         
         # Cash: map CASH/Cash ticker to Cash asset class when strategy has Cash position
-        elif holding.ticker.upper().strip() == "CASH":
+        elif ticker_key == "CASH":
             cash_model_ticker = next(
                 (mt for mt, ac in strategy_positions.items() if ac == AssetClass.CASH),
                 None
@@ -326,7 +420,8 @@ def liquidate_waterfall(
     overweight_class: AssetClass,
     required_sell_value: Decimal,
     holdings: List[MappedHolding],
-    total_value: Decimal
+    total_value: Decimal,
+    sold_by_holding: Optional[Dict[int, Decimal]] = None
 ) -> List[SellOrder]:
     """
     Liquidate holdings using the waterfall: Grade 2 → Grade 1 → Grade 0,
@@ -340,6 +435,10 @@ def liquidate_waterfall(
         required_sell_value: Total value to sell (in dollars)
         holdings: List of holdings in this asset class
         total_value: Total portfolio value
+        sold_by_holding: Optional dict populated with sold value per holding,
+            keyed by id(holding). Lets callers attribute sells to the exact
+            holding instead of matching by ticker (which double-counts when
+            the same ticker appears in multiple holdings).
         
     Returns:
         List of sell orders
@@ -366,24 +465,71 @@ def liquidate_waterfall(
         # Greedy elimination: if position ≤ required, liquidate 100%
         if holding.value <= remaining_to_sell:
             # Liquidate entire position
+            sell_value = holding.value
             sell_orders.append(SellOrder(
                 ticker=holding.ticker,
-                value=holding.value,
+                value=sell_value,
                 gain_loss=holding.unrealized_gain_loss,
                 grade=holding.grade
             ))
-            remaining_to_sell -= holding.value
+            remaining_to_sell -= sell_value
         else:
             # Partial liquidation
+            sell_value = remaining_to_sell
             sell_orders.append(SellOrder(
                 ticker=holding.ticker,
-                value=remaining_to_sell,
-                gain_loss=holding.unrealized_gain_loss * (remaining_to_sell / holding.value),
+                value=sell_value,
+                gain_loss=holding.unrealized_gain_loss * (sell_value / holding.value),
                 grade=holding.grade
             ))
             remaining_to_sell = Decimal('0')
+        if sold_by_holding is not None:
+            sold_by_holding[id(holding)] = sold_by_holding.get(id(holding), Decimal('0')) + sell_value
     
     return sell_orders
+
+
+def calculate_allocations_by_ticker(
+    mapped_holdings: List[MappedHolding],
+    total_value: Decimal,
+) -> Dict[str, Decimal]:
+    """Allocation percentage per model ticker (0.1% precision)."""
+    if total_value == 0:
+        return {}
+    allocations: Dict[str, Decimal] = {}
+    for holding in mapped_holdings:
+        mt = holding.model_ticker
+        allocations[mt] = allocations.get(mt, Decimal("0")) + holding.value
+    return {
+        mt: round_to_precision((value / total_value) * Decimal("100"))
+        for mt, value in allocations.items()
+    }
+
+
+def calculate_buys_by_ticker(
+    current_by_ticker: Dict[str, Decimal],
+    remaining_value: Decimal,
+    total_value: Decimal,
+    targets_by_ticker: Dict[str, Decimal],
+    strategy_positions: Dict[str, AssetClass],
+) -> List[BuyOrder]:
+    """Buy orders per model ticker to reach each ticker's target % of the full portfolio."""
+    buy_orders: List[BuyOrder] = []
+    for model_ticker, target_pct in targets_by_ticker.items():
+        asset_class = strategy_positions[model_ticker]
+        if asset_class == AssetClass.CASH:
+            continue
+        current_pct = current_by_ticker.get(model_ticker, Decimal("0"))
+        current_value = (current_pct / Decimal("100")) * remaining_value
+        target_value = (target_pct / Decimal("100")) * total_value
+        buy_value = target_value - current_value
+        if buy_value > Decimal("0"):
+            buy_orders.append(BuyOrder(
+                model_ticker=model_ticker,
+                value=round_to_precision(buy_value),
+                asset_class=asset_class,
+            ))
+    return buy_orders
 
 
 def calculate_buys(
@@ -464,22 +610,31 @@ def rebalance(
     manual_mappings = prospect_data.get('manual_mappings', {})
     forced_sale_holdings = prospect_data.get('forced_sale_holdings', [])
 
-    # Build strategy data structures
-    strategy_positions = {}
-    targets = {}
-    drifts = {}
-    model_tickers = {}  # {asset_class: model_ticker}
-    
+    # Build strategy data structures (supports multiple model tickers per asset class)
+    strategy_positions: Dict[str, AssetClass] = {}
+    targets: Dict[AssetClass, Decimal] = {}
+    targets_by_ticker: Dict[str, Decimal] = {}
+    drifts: Dict[AssetClass, Decimal] = {}
+    model_tickers: Dict[AssetClass, str] = {}  # representative ticker per class (e.g. cash)
+    drift_weighted_sum: Dict[AssetClass, Decimal] = {}
+    drift_target_sum: Dict[AssetClass, Decimal] = {}
+
     for pos in strategy['positions']:
         model_ticker = pos['model_ticker']
         asset_class = AssetClass(pos['asset_class'])
-        target = Decimal(str(pos['target_allocation']))
+        target = round_to_precision(Decimal(str(pos['target_allocation'])))
         drift = Decimal(str(pos['drift_percentage']))
-        
+
         strategy_positions[model_ticker] = asset_class
-        targets[asset_class] = round_to_precision(target)
-        drifts[asset_class] = round_to_precision(drift)
+        targets_by_ticker[model_ticker] = target
+        targets[asset_class] = targets.get(asset_class, Decimal("0")) + target
+        drift_weighted_sum[asset_class] = drift_weighted_sum.get(asset_class, Decimal("0")) + (drift * target)
+        drift_target_sum[asset_class] = drift_target_sum.get(asset_class, Decimal("0")) + target
         model_tickers[asset_class] = model_ticker
+
+    for asset_class, weight_sum in drift_target_sum.items():
+        if weight_sum > 0:
+            drifts[asset_class] = round_to_precision(drift_weighted_sum[asset_class] / weight_sum)
     
     # Step 1: Classify holdings (side-pocket vs rebalanceable)
     side_pocket, rebalanceable = classify_holdings(holdings)
@@ -510,6 +665,7 @@ def rebalance(
             gain_loss=h.unrealized_gain_loss,
             grade=2  # default for forced sale
         ))
+    sold_by_holding: Dict[int, Decimal] = {}
     for asset_class, delta_pct in drift_deltas.items():
         # Convert percentage delta to dollar value
         required_sell_value = (delta_pct / Decimal('100')) * total_value
@@ -517,7 +673,8 @@ def rebalance(
             asset_class,
             required_sell_value,
             mapped_holdings,
-            total_value
+            total_value,
+            sold_by_holding
         )
         all_sell_orders.extend(sell_orders)
     
@@ -529,20 +686,18 @@ def rebalance(
     remaining_value = total_value - total_sold
     
     # Step 7: Calculate buys for underweight classes
-    # Recalculate current allocations after sells
+    # Recalculate current allocations after sells.
+    # Sells are attributed per holding (not by ticker) so the same ticker held
+    # in multiple lots/splits is not double-subtracted.
     remaining_holdings = []
     for holding in mapped_holdings:
-        # Subtract sold amounts
-        sold_for_ticker = sum(
-            order.value for order in all_sell_orders 
-            if order.ticker == holding.ticker
-        )
-        if sold_for_ticker < holding.value:
+        sold = sold_by_holding.get(id(holding), Decimal('0'))
+        if sold < holding.value:
             # Create adjusted holding
             remaining_holdings.append(MappedHolding(
                 ticker=holding.ticker,
-                value=holding.value - sold_for_ticker,
-                unrealized_gain_loss=holding.unrealized_gain_loss * ((holding.value - sold_for_ticker) / holding.value),
+                value=holding.value - sold,
+                unrealized_gain_loss=holding.unrealized_gain_loss * ((holding.value - sold) / holding.value),
                 model_ticker=holding.model_ticker,
                 asset_class=holding.asset_class,
                 grade=holding.grade
@@ -551,20 +706,27 @@ def rebalance(
     # Recalculate allocations after sells
     current_after_sells = calculate_current_allocations(remaining_holdings, remaining_value)
     
-    # Find underweight classes (current < target)
-    underweight = {}
-    for asset_class in targets:
-        current_pct = current_after_sells.get(asset_class, Decimal('0'))
-        target_pct = targets[asset_class]
-        if current_pct < target_pct:
-            underweight[asset_class] = current_pct
-    
-    # Calculate buys (targets as % of full portfolio; current as % of kept positions)
-    buy_orders = calculate_buys(underweight, remaining_value, total_value, targets, model_tickers)
+    # Calculate buys per model ticker (supports blended portfolios with VOO + IVV, etc.)
+    current_after_sells_by_ticker = calculate_allocations_by_ticker(remaining_holdings, remaining_value)
+    buy_orders = calculate_buys_by_ticker(
+        current_after_sells_by_ticker,
+        remaining_value,
+        total_value,
+        targets_by_ticker,
+        strategy_positions,
+    )
     total_bought = sum(order.value for order in buy_orders)
-    # Max spend: proceeds from sells minus target cash (if Cash is in model)
+    # Max spend: proceeds from sells minus the cash still needed to reach target.
+    # Kept positions may already include cash (sold down to target by the
+    # waterfall when overweight), so only the shortfall is reserved here —
+    # reserving the full target would under-fund the buys.
     target_cash_value = (targets.get(AssetClass.CASH, Decimal('0')) / Decimal('100')) * total_value
-    max_spend = max(Decimal('0'), total_sold - target_cash_value)
+    kept_cash_value = sum(
+        (h.value for h in remaining_holdings if h.asset_class == AssetClass.CASH),
+        Decimal('0')
+    )
+    cash_shortfall = max(Decimal('0'), target_cash_value - kept_cash_value)
+    max_spend = max(Decimal('0'), total_sold - cash_shortfall)
     # Scale down buy orders if we would overspend
     if total_bought > max_spend:
         scale = max_spend / total_bought if total_bought > 0 else Decimal('0')
@@ -576,37 +738,121 @@ def rebalance(
                 asset_class=bo.asset_class
             ))
         buy_orders = scaled
-        total_bought = sum(order.value for order in buy_orders)
-    # Cash residual = proceeds from sells minus what we spent on buys
-    cash_residual = max(Decimal('0'), total_sold - total_bought)
-    cash_residual = sweep_residuals(cash_residual)
 
     # Build pre_holdings: mapped + forced sale + side pocket + unmapped (so pre total = full portfolio)
     pre_holdings: List[PreHolding] = []
     for h in mapped_holdings:
-        pre_holdings.append(PreHolding(ticker=h.ticker, asset_class=h.asset_class.value, value=h.value))
+        pre_holdings.append(
+            PreHolding(
+                ticker=h.ticker,
+                asset_class=h.asset_class.value,
+                value=h.value,
+                unrealized_gain_loss=h.unrealized_gain_loss,
+            )
+        )
     for h in forced_sale_holdings:
-        pre_holdings.append(PreHolding(ticker=h.ticker, asset_class="Forced Sale", value=h.value))
+        pre_holdings.append(
+            PreHolding(
+                ticker=h.ticker,
+                asset_class="Forced Sale",
+                value=h.value,
+                unrealized_gain_loss=h.unrealized_gain_loss,
+            )
+        )
     for h in side_pocket:
-        pre_holdings.append(PreHolding(ticker=h.ticker, asset_class="Side Pocket", value=h.value))
+        pre_holdings.append(
+            PreHolding(
+                ticker=h.ticker,
+                asset_class="Side Pocket",
+                value=h.value,
+                unrealized_gain_loss=h.unrealized_gain_loss,
+            )
+        )
     for h in unmapped_holdings:
-        pre_holdings.append(PreHolding(ticker=h.ticker, asset_class="Unmapped", value=h.value))
+        pre_holdings.append(
+            PreHolding(
+                ticker=h.ticker,
+                asset_class="Unmapped",
+                value=h.value,
+                unrealized_gain_loss=h.unrealized_gain_loss,
+            )
+        )
 
     pre_total = sum(ph.value for ph in pre_holdings)
 
     # Build post_holdings: remaining (kept; include legacy ticker) + buy_orders + cash
     post_holdings: List[PostHolding] = []
     for h in remaining_holdings:
-        post_holdings.append(PostHolding(model_ticker=h.model_ticker, asset_class=h.asset_class.value, value=h.value, ticker=h.ticker))
+        post_holdings.append(
+            PostHolding(
+                model_ticker=h.model_ticker,
+                asset_class=h.asset_class.value,
+                value=h.value,
+                ticker=h.ticker,
+                unrealized_gain_loss=h.unrealized_gain_loss,
+            )
+        )
     for bo in buy_orders:
-        post_holdings.append(PostHolding(model_ticker=bo.model_ticker, asset_class=bo.asset_class.value, value=bo.value))
+        post_holdings.append(
+            PostHolding(
+                model_ticker=bo.model_ticker,
+                asset_class=bo.asset_class.value,
+                value=bo.value,
+                unrealized_gain_loss=Decimal("0"),
+            )
+        )
+    # Side-pocket positions are unchanged (not transitioned); include in post-trade view
+    for h in side_pocket:
+        post_holdings.append(PostHolding(
+            model_ticker=h.ticker,
+            asset_class="Side Pocket",
+            value=h.value,
+            ticker=h.ticker,
+            unrealized_gain_loss=h.unrealized_gain_loss,
+        ))
     # Normalize cash so post total equals pre total (avoids rounding drift)
     post_sum_without_cash = sum(poh.value for poh in post_holdings)
     cash_value = max(Decimal('0'), pre_total - post_sum_without_cash)
     if cash_value > 0:
         cash_model_ticker = model_tickers.get(AssetClass.CASH, "Cash")
-        post_holdings.append(PostHolding(model_ticker=cash_model_ticker, asset_class="Cash", value=cash_value))
+        post_holdings.append(
+            PostHolding(
+                model_ticker=cash_model_ticker,
+                asset_class="Cash",
+                value=cash_value,
+                unrealized_gain_loss=Decimal("0"),
+            )
+        )
+
+    # Consolidate all post-trade cash rows into a single line item so residual cash
+    # augments existing cash instead of creating a duplicate cash holding.
+    cash_rows = [h for h in post_holdings if h.asset_class == "Cash"]
+    non_cash_rows = [h for h in post_holdings if h.asset_class != "Cash"]
+    if cash_rows:
+        total_cash_value = sum(h.value for h in cash_rows)
+        total_cash_unrealized = sum(h.unrealized_gain_loss for h in cash_rows)
+        first = cash_rows[0]
+        merged_model_ticker = first.model_ticker
+        merged_ticker = first.ticker
+        for h in cash_rows:
+            if h.model_ticker:
+                merged_model_ticker = h.model_ticker
+            if h.ticker:
+                merged_ticker = h.ticker
+                break
+        non_cash_rows.append(PostHolding(
+            model_ticker=merged_model_ticker,
+            asset_class="Cash",
+            value=total_cash_value,
+            ticker=merged_ticker,
+            unrealized_gain_loss=total_cash_unrealized,
+        ))
+        post_holdings = non_cash_rows
     cash_residual = cash_value  # keep API/DB in sync with post_holdings total
+
+    equivalent_usage = build_equivalent_usage_rows(
+        mapped_holdings, product_equivalents, manual_mappings
+    )
 
     return TransitionResult(
         sell_orders=all_sell_orders,
@@ -614,5 +860,6 @@ def rebalance(
         cash_residual=cash_residual,
         total_realized_gain_loss=round_to_precision(total_realized_gain_loss),
         pre_holdings=pre_holdings,
-        post_holdings=post_holdings
+        post_holdings=post_holdings,
+        equivalent_usage=equivalent_usage,
     )

@@ -1,7 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import ProspectUpload from './ProspectUpload';
+import ClassifyHoldingsPanel from './ClassifyHoldingsPanel';
 import MappingWizard from './MappingWizard';
+import {
+  primaryStrategyIdFromSelection,
+  type StrategySelection,
+} from './StrategyBlendSelector';
 import { prospectsAPI, strategiesAPI } from '../../services/api';
 
 const ProspectFlow = () => {
@@ -10,8 +15,10 @@ const ProspectFlow = () => {
   const [step, setStep] = useState<'upload' | 'classify' | 'map' | 'calculate' | 'result'>('upload');
   const [prospectId, setProspectId] = useState<string | null>(id || null);
   const [strategies, setStrategies] = useState<any[]>([]);
-  const [selectedStrategyId, setSelectedStrategyId] = useState('');
-  const [classificationResult, setClassificationResult] = useState<any>(null);
+  const [strategySelection, setStrategySelection] = useState<StrategySelection>({
+    mode: 'single',
+    strategyId: '',
+  });
   const [unmappedHoldings, setUnmappedHoldings] = useState<any[]>([]);
   const [transitionResult, setTransitionResult] = useState<any>(null);
 
@@ -62,12 +69,7 @@ const ProspectFlow = () => {
 
   const handleClassifyComplete = async () => {
     if (!prospectId) return;
-
     try {
-      const result = await prospectsAPI.classify(prospectId);
-      setClassificationResult(result.data);
-
-      // Check for unmapped holdings
       const unmapped = await prospectsAPI.getUnmapped(prospectId);
       if (unmapped.data && unmapped.data.length > 0) {
         setUnmappedHoldings(unmapped.data);
@@ -76,7 +78,7 @@ const ProspectFlow = () => {
         setStep('calculate');
       }
     } catch (err) {
-      console.error('Failed to classify holdings:', err);
+      console.error('Failed to load unmapped holdings:', err);
     }
   };
 
@@ -162,51 +164,53 @@ const ProspectFlow = () => {
           {step === 'upload' && (
             <ProspectUpload
               strategies={strategies}
-              selectedStrategyId={selectedStrategyId}
-              onStrategyChange={setSelectedStrategyId}
+              strategySelection={strategySelection}
+              onStrategySelectionChange={setStrategySelection}
               onUploadComplete={handleUploadComplete}
             />
           )}
 
-          {step === 'classify' && (
+          {step === 'classify' && prospectId && (
             <div className="bg-white shadow rounded-lg p-6">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">
-                Classify Holdings
+              <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                Classify holdings
               </h2>
-              {classificationResult ? (
-                <div className="space-y-4">
-                  <p className="text-gray-700">
-                    Side-pocket holdings: {classificationResult.side_pocket_count}
-                  </p>
-                  <p className="text-gray-700">
-                    Rebalanceable holdings: {classificationResult.rebalanceable_count}
-                  </p>
-                </div>
-              ) : (
-                <button
-                  onClick={handleClassifyComplete}
-                  className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
-                >
-                  Classify Holdings
-                </button>
-              )}
+              <p className="text-sm text-gray-500 mb-4">
+                Choose side-pocket positions, then continue to map the rest.
+              </p>
+              <ClassifyHoldingsPanel
+                prospectId={prospectId}
+                onComplete={handleClassifyComplete}
+              />
             </div>
           )}
 
           {step === 'map' && unmappedHoldings.length > 0 && (
-            <MappingWizard
-              prospectId={prospectId!}
-              unmappedHoldings={unmappedHoldings}
-              onMappingComplete={handleMappingComplete}
-            />
+            <div className="space-y-4">
+              <MappingWizard
+                prospectId={prospectId!}
+                unmappedHoldings={unmappedHoldings}
+                strategyId={primaryStrategyIdFromSelection(strategySelection)}
+                onMappingComplete={handleMappingComplete}
+              />
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setStep('classify')}
+                  className="text-sm font-medium text-indigo-600 hover:text-indigo-800"
+                >
+                  Back to classify
+                </button>
+              </div>
+            </div>
           )}
           {step === 'map' && unmappedHoldings.length === 0 && (
             <div className="bg-white shadow rounded-lg p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Mapping</h2>
               <p className="text-gray-700 mb-4">
-                All holdings are mapped. You can proceed to calculate or re-run Classify to change how holdings are classified.
+                All holdings are mapped. Proceed to calculate, or go back to change side-pocket selections.
               </p>
-              <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex flex-col sm:flex-row flex-wrap gap-3">
                 <button
                   onClick={() => setStep('calculate')}
                   className="flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
@@ -218,6 +222,13 @@ const ProspectFlow = () => {
                   className="flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
                 >
                   Refresh mapping status
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStep('classify')}
+                  className="flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                >
+                  Back to classify
                 </button>
               </div>
             </div>
@@ -231,7 +242,7 @@ const ProspectFlow = () => {
               <p className="text-gray-700 mb-4">
                 All holdings have been mapped. Ready to calculate the transition.
               </p>
-              <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex flex-col sm:flex-row flex-wrap gap-3">
                 <button
                   onClick={handleCalculate}
                   className="flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
@@ -243,6 +254,13 @@ const ProspectFlow = () => {
                   className="flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
                 >
                   Back to mapping
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStep('classify')}
+                  className="flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                >
+                  Back to classify
                 </button>
               </div>
             </div>

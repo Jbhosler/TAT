@@ -13,31 +13,17 @@ const LandingPage = () => {
 
     try {
       const response = await authAPI.validatePasscode(passcode);
-      console.log('Auth response:', response);
-      
-      // Handle response - check both response.valid and response.data.valid
-      const isValid = (response && (response.valid === true || response.data?.valid === true));
+      const isValid = response && (response.valid === true || response.data?.valid === true);
       const token = response?.token || response?.data?.token || 'authenticated';
-      
-      if (isValid) {
-        // Save token
-        localStorage.setItem('auth_token', token);
-        console.log('Token saved:', token);
-        console.log('Token in localStorage:', localStorage.getItem('auth_token'));
-        
-        // Dispatch custom event to notify App component of auth change
-        window.dispatchEvent(new CustomEvent('auth-changed'));
-        
-        // Navigate to dashboard using hash for HashRouter
-        console.log('Navigating to dashboard...');
-        window.location.hash = '#/dashboard';
-      } else {
-        console.log('Response not valid:', response);
+      if (!isValid) {
         setError('Invalid passcode');
+        return;
       }
+      localStorage.setItem('auth_token', token);
+      localStorage.setItem('auth_role', 'super_admin');
+      window.dispatchEvent(new CustomEvent('auth-changed'));
+      window.location.hash = '#/dashboard';
     } catch (err: any) {
-      console.error('Auth error:', err);
-      console.error('Error details:', err.response);
       setError(err.response?.data?.detail || 'Invalid passcode');
     } finally {
       setLoading(false);
@@ -72,9 +58,7 @@ const LandingPage = () => {
             />
           </div>
 
-          {error && (
-            <div className="text-red-600 text-sm text-center">{error}</div>
-          )}
+          {error && <div className="text-red-600 text-sm text-center">{error}</div>}
 
           <div>
             <button

@@ -1,0 +1,126 @@
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+  background: #e5e7eb;
+  color: #111827;
+  line-height: 1.5;
+}
+
+.page {
+  min-height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 32px 20px;
+}
+
+.portal-card {
+  width: 100%;
+  max-width: 840px;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.08),
+    0 8px 24px rgba(0, 0, 0, 0.06);
+  padding: 28px 28px 24px;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: #4f46e5;
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: 1.65rem;
+  font-weight: 700;
+}
+
+.lead {
+  margin: 0 0 22px;
+  font-size: 0.975rem;
+  color: #4b5563;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+}
+
+.app-tile-wrap {
+  min-height: 100%;
+}
+
+.app-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  height: 100%;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  padding: 18px 16px;
+  text-decoration: none;
+  color: #111827;
+  background: #fafafa;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s,
+    background 0.15s;
+}
+
+a.app-card:hover {
+  border-color: #818cf8;
+  background: #f5f3ff;
+  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.12);
+}
+
+.app-card.disabled {
+  color: #6b7280;
+  cursor: default;
+  background: #f9fafb;
+}
+
+.app-name {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.app-note {
+  font-size: 0.8125rem;
+  color: #6b7280;
+  flex: 1;
+}
+
+.cta {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #4f46e5;
+}
+
+.footnote {
+  margin: 24px 0 0;
+  font-size: 0.8125rem;
+  color: #9ca3af;
+}

@@ -1,9 +1,9 @@
 """
 SQLAlchemy database models for the Tax-Aware Transition Tool.
 """
-from sqlalchemy import Column, String, Integer, Numeric, Boolean, ForeignKey, DateTime, Date, JSON, Enum as SQLEnum, LargeBinary, UniqueConstraint
+from sqlalchemy import Column, String, Integer, Numeric, Boolean, ForeignKey, DateTime, Date, JSON, Enum as SQLEnum, LargeBinary, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, foreign
 from sqlalchemy.sql import func
 import uuid
 import enum
@@ -20,6 +20,9 @@ class AssetClass(str, enum.Enum):
     US_SMALL_CAP = "US Small Cap"
     INTERNATIONAL_DEVELOPED = "International Developed"
     EMERGING_MARKETS = "Emerging Markets"
+    INFRASTRUCTURE = "Infrastructure"
+    OPTIONS_OVERLAY = "Options Overlay"
+    REAL_ESTATE = "Real Estate"
     # Fixed Income (legacy - kept for backwards compatibility)
     FIXED_INCOME = "Fixed Income"
     # Fixed Income subclasses
@@ -40,6 +43,14 @@ class AssetClass(str, enum.Enum):
     HIGH_YIELD = "High Yield"
     PRIVATE_CREDIT = "Private Credit"
     INTERNATIONAL_BOND = "International Bond"
+    BANK_LOAN = "Bank Loan"
+    SECURITIZED = "Securitized"
+    VARIABLE_RATE_IG = "Variable Rate IG"
+    MBS_FLOATING_RATE = "MBS Floating Rate"
+    CLO_AAA = "CLO-AAA"
+    CLO_BBB = "CLO-BBB"
+    CLO_A = "CLO-A"
+    COMMERCIAL_PAPER = "Commercial Paper"
     # Cash
     CASH = "Cash"  # For residuals
 
@@ -157,6 +168,8 @@ class Prospect(Base):
     __tablename__ = "prospects"
     
     strategy_id = Column(UUID(as_uuid=True), ForeignKey("strategies.id"), nullable=False)
+    strategy_blend = Column(JSONB, nullable=True)  # [{strategy_id, weight, version?}]
+    strategy_account_links = Column(JSONB, nullable=True)  # [{strategy_id, monitored_account_id}]
     name = Column(String(255), nullable=False)
     total_value = Column(Numeric(15, 2), nullable=False)
     document_pdf = Column(LargeBinary, nullable=True)
@@ -210,13 +223,17 @@ class TransitionResult(Base):
     
     prospect_id = Column(UUID(as_uuid=True), ForeignKey("prospects.id"), nullable=False)
     strategy_version = Column(Integer, nullable=False)  # Snapshot of strategy version at calculation time
+    strategy_versions_snapshot = Column(JSONB, nullable=True)  # strategy_id -> version at calculation
+    target_positions = Column(JSONB, nullable=True)  # [{model_ticker, asset_class, target_allocation, drift_percentage}]
     sell_orders = Column(JSONB, nullable=False)  # [{ticker, quantity, value, gain_loss, grade}]
     buy_orders = Column(JSONB, nullable=False)  # [{model_ticker, value, asset_class}]
     cash_residual = Column(Numeric(15, 2), nullable=False)
     total_realized_gain_loss = Column(Numeric(15, 2), nullable=False)
     pre_holdings = Column(JSONB, nullable=True)   # [{ticker, asset_class, value}] legacy by asset class
     post_holdings = Column(JSONB, nullable=True)  # [{model_ticker, asset_class, value}] proposed by asset class
-    
+    equivalent_usage = Column(JSONB, nullable=True)  # [{legacy_ticker, model_ticker, grade, in_product_equivalents}]
+    pdf_additional_text = Column(Text, nullable=True)  # Optional user-provided narrative stored with scenario result
+
     # Relationships
     prospect = relationship("Prospect", back_populates="transition_results")
 
@@ -300,3 +317,38 @@ class MonitoringIngestRun(Base):
     ingested_count = Column(Integer, nullable=False, default=0)
     as_of_date = Column(Date, nullable=True)
     file_checksum = Column(String(64), nullable=False)
+
+
+class AuthorizedUser(Base):
+    """Authorized user allowed to access the app."""
+    __tablename__ = "authorized_users"
+
+    email = Column(String(255), nullable=False, unique=True, index=True)
+    display_name = Column(String(255), nullable=True)
+    role = Column(String(50), nullable=False, default="user")  # user | admin | super_admin
+    is_active = Column(Boolean, nullable=False, default=True)
+    added_by = Column(String(255), nullable=True)
+
+    magic_link_tokens = relationship(
+        "MagicLinkToken",
+        back_populates="authorized_user",
+        cascade="all, delete-orphan",
+        primaryjoin="foreign(MagicLinkToken.email) == AuthorizedUser.email",
+    )
+
+
+class MagicLinkToken(Base):
+    """Single-use magic link token (stored as hash)."""
+    __tablename__ = "magic_link_tokens"
+
+    email = Column(String(255), nullable=False, index=True)
+    token_hash = Column(String(128), nullable=False, unique=True, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    used_at = Column(DateTime(timezone=True), nullable=True)
+
+    authorized_user = relationship(
+        "AuthorizedUser",
+        back_populates="magic_link_tokens",
+        primaryjoin="foreign(MagicLinkToken.email) == AuthorizedUser.email",
+        viewonly=True,
+    )

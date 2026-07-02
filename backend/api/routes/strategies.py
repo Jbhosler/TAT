@@ -6,16 +6,22 @@ from sqlalchemy.orm import Session, selectinload
 from typing import List
 from uuid import UUID
 from backend.database.connection import get_db
+from backend.api.deps import get_current_user
 from backend.api.models.database import Strategy, StrategyPosition
 from backend.api.models.schemas import (
     StrategyCreate,
     StrategyResponse,
     StrategyPositionCreate,
     StrategyPositionResponse,
+    StrategyBlendPreviewRequest,
+    StrategyBlendPreviewResponse,
+    BlendedPositionPreview,
 )
+from backend.logic.strategy_blend import StrategyBlendError, build_blended_positions
+from backend.api.models.database import AssetClass
 from backend.utils.csv_parser import parse_strategy_bulk_upload
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 def _strategy_to_response(strategy: Strategy) -> StrategyResponse:
@@ -49,6 +55,36 @@ async def list_strategies(db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Error listing strategies: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+@router.post("/blend-preview", response_model=StrategyBlendPreviewResponse)
+async def preview_strategy_blend(
+    body: StrategyBlendPreviewRequest,
+    db: Session = Depends(get_db),
+):
+    """Preview blended model portfolio from weighted strategies."""
+    components = [
+        {"strategy_id": str(c.strategy_id), "weight": float(c.weight)}
+        for c in body.components
+    ]
+    try:
+        positions, _, display_name = build_blended_positions(db, components)
+    except StrategyBlendError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    preview_positions = [
+        BlendedPositionPreview(
+            model_ticker=p["model_ticker"],
+            asset_class=AssetClass(p["asset_class"]),
+            target_allocation=p["target_allocation"],
+            drift_percentage=p["drift_percentage"],
+        )
+        for p in positions
+    ]
+    return StrategyBlendPreviewResponse(
+        display_name=display_name,
+        positions=preview_positions,
+    )
 
 
 @router.get("/{strategy_id}", response_model=StrategyResponse)

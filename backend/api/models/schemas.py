@@ -67,6 +67,39 @@ class StrategyResponse(BaseModel):
         from_attributes = True
 
 
+class StrategyBlendComponent(BaseModel):
+    strategy_id: UUID
+    weight: Decimal = Field(..., gt=0, le=100)
+    version: Optional[int] = None
+
+
+class StrategyBlendPreviewRequest(BaseModel):
+    components: List[StrategyBlendComponent]
+
+    @validator('components')
+    def validate_components(cls, v):
+        if not v or len(v) < 1:
+            raise ValueError('Blend must include at least one strategy')
+        total = sum(c.weight for c in v)
+        if not (Decimal('99.999') <= total <= Decimal('100.001')):
+            raise ValueError(
+                f'Blend weights must sum to 100%. Current total: {float(total):.3f}%'
+            )
+        return v
+
+
+class BlendedPositionPreview(BaseModel):
+    model_ticker: str
+    asset_class: AssetClass
+    target_allocation: Decimal
+    drift_percentage: Decimal
+
+
+class StrategyBlendPreviewResponse(BaseModel):
+    display_name: str
+    positions: List[BlendedPositionPreview]
+
+
 # Product Equivalent Schemas
 class ProductEquivalentCreate(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
@@ -180,17 +213,66 @@ class ProspectHoldingResponse(BaseModel):
         from_attributes = True
 
 
+class StrategyAccountLink(BaseModel):
+    strategy_id: UUID
+    monitored_account_id: Optional[UUID] = None
+
+
+class StrategyAccountLinkResponse(BaseModel):
+    strategy_id: UUID
+    strategy_name: Optional[str] = None
+    monitored_account_id: Optional[UUID] = None
+    account_display: Optional[str] = None
+
+
+class UpdateStrategyAccountLinksRequest(BaseModel):
+    links: List[StrategyAccountLink]
+
+
 class ProspectResponse(BaseModel):
     id: UUID
     strategy_id: UUID
+    strategy_blend: Optional[List[StrategyBlendComponent]] = None
     name: str
     total_value: Decimal
     holdings: List[ProspectHoldingResponse]
+    has_document: bool = False
+    strategy_account_links: Optional[List[StrategyAccountLinkResponse]] = None
     created_at: datetime
     updated_at: datetime
     
     class Config:
         from_attributes = True
+
+
+class UpdateProspectTargetRequest(BaseModel):
+    """Update single strategy or weighted blend target for an existing prospect."""
+    strategy_id: UUID
+    strategy_blend: Optional[List[StrategyBlendComponent]] = None
+
+    @validator('strategy_blend')
+    def validate_blend(cls, v):
+        if v is None:
+            return v
+        if len(v) < 1:
+            raise ValueError('Blend must include at least one strategy')
+        total = sum(c.weight for c in v)
+        if not (Decimal('99.999') <= total <= Decimal('100.001')):
+            raise ValueError(
+                f'Blend weights must sum to 100%. Current total: {float(total):.3f}%'
+            )
+        return v
+
+
+class ProspectHoldingsUpdateRequest(BaseModel):
+    """Replace prospect holdings (and optionally rename)."""
+    name: Optional[str] = Field(None, max_length=255)
+    holdings: List[ProspectHoldingCreate]
+
+
+class ClassifySidePocketRequest(BaseModel):
+    """Which holdings are side pocket (not transitioned); all others are rebalanceable."""
+    side_pocket_holding_ids: List[UUID] = Field(default_factory=list)
 
 
 class ProspectListItem(BaseModel):
@@ -266,6 +348,7 @@ class PreHolding(BaseModel):
     ticker: str
     asset_class: str
     value: Decimal
+    unrealized_gain_loss: Optional[Decimal] = None
 
 
 class PostHolding(BaseModel):
@@ -275,6 +358,26 @@ class PostHolding(BaseModel):
     asset_class: str
     value: Decimal
     ticker: Optional[str] = None  # legacy ticker when position is kept from a mapped holding
+    unrealized_gain_loss: Optional[Decimal] = None
+
+
+class EquivalentUsageRow(BaseModel):
+    """Legacy→model pair used in transition; in_product_equivalents True if row exists in GE_Alt for strategy."""
+    model_config = ConfigDict(protected_namespaces=())
+    legacy_ticker: str
+    model_ticker: str
+    grade: int = Field(..., ge=0, le=2)
+    in_product_equivalents: bool
+    mapping_source: Optional[str] = None  # ge_alt | manual | cash | not_in_ge_alt
+
+
+class TargetPositionRow(BaseModel):
+    """One row of the target model portfolio (per model ticker)."""
+    model_config = ConfigDict(protected_namespaces=())
+    model_ticker: str
+    asset_class: str
+    target_allocation: Decimal
+    drift_percentage: Decimal
 
 
 class TransitionResultResponse(BaseModel):
@@ -288,9 +391,15 @@ class TransitionResultResponse(BaseModel):
     total_realized_gain_loss: Decimal
     pre_holdings: Optional[List[PreHolding]] = None
     post_holdings: Optional[List[PostHolding]] = None
+    equivalent_usage: Optional[List[EquivalentUsageRow]] = None
+    target_positions: Optional[List[TargetPositionRow]] = None
+    strategy_display_name: Optional[str] = None
     created_at: datetime
 
-    @field_validator("sell_orders", "buy_orders", "pre_holdings", "post_holdings", mode="before")
+    @field_validator(
+        "sell_orders", "buy_orders", "pre_holdings", "post_holdings",
+        "equivalent_usage", "target_positions", mode="before",
+    )
     @classmethod
     def parse_jsonb_list(cls, v: Any) -> Any:
         """Parse JSONB columns that come back as JSON strings from the DB (e.g. pg8000)."""
@@ -416,6 +525,12 @@ class LastIngestResponse(BaseModel):
     as_of_date: Optional[date] = None
 
 
+class SnapshotDatesResponse(BaseModel):
+    """Available monitoring snapshot dates for historical views."""
+    dates: List[date] = []
+    latest_date: Optional[date] = None
+
+
 class RecalculateResponse(BaseModel):
     """Response from POST /api/monitoring/recalculate."""
     recalculated_count: int = 0
@@ -515,12 +630,13 @@ class EquivalentAccountUsageItem(BaseModel):
 
 
 class AdviserAccountDetailItem(BaseModel):
-    """One row in account-by-adviser table: account + legacy ticker + model ticker it maps to."""
+    """One row per account in account-by-adviser table."""
     account_id: UUID
     partial_account_number: Optional[str] = None
     account_value: Decimal
-    legacy_ticker: str
-    model_ticker: str
+    has_equivalents: bool
+    strategy_name: Optional[str] = None
+    registration_type: Optional[str] = None
 
 
 class LegacyTickerTotalItem(BaseModel):
@@ -530,8 +646,24 @@ class LegacyTickerTotalItem(BaseModel):
     account_count: int
 
 
+class AdviserStrategySummaryItem(BaseModel):
+    """One row in By Adviser summary table: totals per strategy."""
+    strategy_name: str
+    total_value: Decimal
+    account_count: int
+
+
+class AdviserSummaryTotals(BaseModel):
+    """Top-level totals for By Adviser summary section."""
+    total_accounts: int
+    total_aum: Decimal
+    accounts_with_equivalents: int
+
+
 class AdviserAccountDetailsResponse(BaseModel):
-    """Account details by adviser: table rows and legacy ticker totals."""
+    """Account details by adviser: summary, accounts, legacy ticker totals."""
+    summary: AdviserSummaryTotals
+    summary_by_strategy: List[AdviserStrategySummaryItem] = []
     accounts: List[AdviserAccountDetailItem] = []
     legacy_totals: List[LegacyTickerTotalItem] = []
 
@@ -599,6 +731,28 @@ class TotalFirmResponse(BaseModel):
     """GET /api/monitoring/total-firm: summary by model + all accounts table."""
     summary_by_model: List[TotalFirmModelSummaryItem] = []
     accounts: List[TotalFirmAccountItem] = []
+
+
+class TotalFirmYtdStrategyItem(BaseModel):
+    """YTD account/AUM change for one strategy/model."""
+    strategy_name: str
+    start_account_count: int = 0
+    current_account_count: int = 0
+    account_count_delta: int = 0
+    start_aum: Decimal = Decimal("0")
+    current_aum: Decimal = Decimal("0")
+    aum_delta: Decimal = Decimal("0")
+    aum_delta_pct: Optional[float] = None
+
+
+class TotalFirmYtdResponse(BaseModel):
+    """YTD firm overview comparing current date to earliest available date in year."""
+    has_baseline: bool = False
+    baseline_date: Optional[date] = None
+    current_date: Optional[date] = None
+    strategies: List[TotalFirmYtdStrategyItem] = []
+    advisers_won: List[str] = []
+    advisers_lost: List[str] = []
 
 
 # Ingest changes (prior vs current upload)
@@ -679,3 +833,77 @@ class IngestChangesResponse(BaseModel):
     removed_advisers: List[str] = []
     adviser_account_changes: List[IngestChangeAdviserItem] = []
     accounts_with_holdings_changes: List[IngestChangeAccountItem] = []  # New/removed tickers
+
+
+# Auth schemas
+class RequestMagicLinkRequest(BaseModel):
+    email: str = Field(..., max_length=255)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        return value.strip().lower()
+
+
+class VerifyMagicLinkRequest(BaseModel):
+    token: str = Field(..., min_length=10, max_length=1024)
+
+
+class VerifyMagicLinkResponse(BaseModel):
+    token: str
+    role: str
+    email: str
+
+
+class AuthMeResponse(BaseModel):
+    email: str
+    role: str
+
+
+class AuthorizedUserCreateRequest(BaseModel):
+    email: str = Field(..., max_length=255)
+    display_name: Optional[str] = Field(default=None, max_length=255)
+    role: str = Field(default="user", max_length=50)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_user_email(cls, value: str) -> str:
+        return value.strip().lower()
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, value: str) -> str:
+        role = value.strip().lower()
+        if role not in {"user", "admin", "super_admin"}:
+            raise ValueError("role must be one of: user, admin, super_admin")
+        return role
+
+
+class AuthorizedUserUpdateRequest(BaseModel):
+    display_name: Optional[str] = Field(default=None, max_length=255)
+    role: Optional[str] = Field(default=None, max_length=50)
+    is_active: Optional[bool] = None
+
+    @field_validator("role")
+    @classmethod
+    def validate_update_role(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        role = value.strip().lower()
+        if role not in {"user", "admin", "super_admin"}:
+            raise ValueError("role must be one of: user, admin, super_admin")
+        return role
+
+
+class AuthorizedUserResponse(BaseModel):
+    id: UUID
+    email: str
+    display_name: Optional[str] = None
+    role: str
+    is_active: bool
+    added_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True

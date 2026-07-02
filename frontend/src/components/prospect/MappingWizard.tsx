@@ -6,22 +6,60 @@ interface MappingWizardProps {
   prospectId: string;
   unmappedHoldings: any[];
   onMappingComplete: () => void;
+  onDataChanged?: () => void;
+  strategyId?: string;
+  strategyIds?: string[];
 }
 
 const MappingWizard = ({
   prospectId,
   unmappedHoldings,
   onMappingComplete,
+  onDataChanged,
+  strategyId,
+  strategyIds,
 }: MappingWizardProps) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [mappings, setMappings] = useState<Record<string, any>>({});
   const [strategies, setStrategies] = useState<any[]>([]);
   const [showMultiAsset, setShowMultiAsset] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [mappingsLoaded, setMappingsLoaded] = useState(false);
 
   useEffect(() => {
     loadStrategies();
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setMappingsLoaded(false);
+      try {
+        const res = await prospectsAPI.getMappings(prospectId);
+        if (cancelled) return;
+        const initial: Record<string, any> = {};
+        for (const m of res.data || []) {
+          initial[m.legacy_ticker] = {
+            model_ticker: m.model_ticker,
+            grade: m.grade,
+            dollar_split: m.dollar_split ?? null,
+          };
+        }
+        setMappings(initial);
+      } catch (err) {
+        console.error('Failed to load existing mappings:', err);
+      } finally {
+        if (!cancelled) setMappingsLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [prospectId]);
+
+  useEffect(() => {
+    setCurrentIndex(0);
+  }, [prospectId, unmappedHoldings]);
 
   const loadStrategies = async () => {
     try {
@@ -63,6 +101,7 @@ const MappingWizard = ({
         grade: currentMapping.grade,
         dollar_split: currentMapping.dollar_split,
       });
+      onDataChanged?.();
 
       if (currentIndex < unmappedHoldings.length - 1) {
         setCurrentIndex(currentIndex + 1);
@@ -83,6 +122,7 @@ const MappingWizard = ({
     setLoading(true);
     try {
       await prospectsAPI.markForcedSale(prospectId, currentHolding.ticker);
+      onDataChanged?.();
       if (currentIndex < unmappedHoldings.length - 1) {
         setCurrentIndex(currentIndex + 1);
       } else {
@@ -108,9 +148,17 @@ const MappingWizard = ({
     );
   }
 
-  // Get available model tickers from strategies
+  // Model tickers from selected strategy or all strategies in a blend.
   const modelTickers: string[] = [];
-  strategies.forEach(s => {
+  const ids = strategyIds?.length
+    ? strategyIds
+    : strategyId
+      ? [strategyId]
+      : [];
+  const sourceStrategies = ids.length
+    ? strategies.filter((s) => ids.includes(s.id))
+    : strategies;
+  sourceStrategies.forEach((s) => {
     s.positions?.forEach((p: any) => {
       if (!modelTickers.includes(p.model_ticker)) {
         modelTickers.push(p.model_ticker);
@@ -128,6 +176,9 @@ const MappingWizard = ({
         <p className="text-sm text-gray-600">
           Mapping {currentIndex + 1} of {unmappedHoldings.length}
         </p>
+        {!mappingsLoaded && (
+          <p className="text-xs text-gray-500 mt-1">Loading saved mappings…</p>
+        )}
       </div>
 
       <div className="space-y-6">
@@ -135,12 +186,17 @@ const MappingWizard = ({
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Ticker: {currentHolding.ticker}
           </label>
-          <p className="text-xs text-gray-500 mb-4">
+          <p className="text-xs text-gray-500 mb-1">
             Value: ${currentHolding.value?.toLocaleString('en-US', {
               minimumFractionDigits: 2,
               maximumFractionDigits: 2,
             })}
           </p>
+          {currentHolding.mapping_status && (
+            <p className="text-xs text-gray-500 mb-4">
+              Status: <span className="font-medium">{currentHolding.mapping_status}</span>
+            </p>
+          )}
         </div>
 
         <div>
@@ -220,7 +276,7 @@ const MappingWizard = ({
             )}
             <button
               onClick={handleSaveMapping}
-              disabled={loading || !currentMapping.model_ticker}
+              disabled={loading || !mappingsLoaded || !currentMapping.model_ticker}
               className="flex-1 py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
             >
               {loading ? 'Saving...' : currentIndex < unmappedHoldings.length - 1 ? 'Next' : 'Complete'}
@@ -229,7 +285,7 @@ const MappingWizard = ({
           <button
             type="button"
             onClick={handleForcedSale}
-            disabled={loading}
+            disabled={loading || !mappingsLoaded}
             className="py-2 px-4 border border-amber-500 rounded-md text-sm font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 disabled:opacity-50"
           >
             Don&apos;t map (forced sale)

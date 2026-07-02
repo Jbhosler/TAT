@@ -27,15 +27,26 @@ def test_parse_aggregated_amount():
     assert _parse_aggregated_amount("16,422.32") == Decimal("16422.32")
     assert _parse_aggregated_amount("") == Decimal("0")
     assert _parse_aggregated_amount("N/A") == Decimal("0")
+    with pytest.raises(ValueError, match="Negative monitoring amount"):
+        _parse_aggregated_amount("-1.00")
+    with pytest.raises(ValueError, match="Negative monitoring amount"):
+        _parse_aggregated_amount("(1.00)")
+    with pytest.raises(ValueError, match="Invalid monitoring amount"):
+        _parse_aggregated_amount("not-a-number")
 
 
 def test_parse_as_of_date():
-    """As Of Date: DD-Mon-YY parsed correctly."""
+    """As Of Date common formats parse correctly."""
     d = _parse_as_of_date("28-Jan-26")
     assert d is not None
     assert d.year == 2026
     assert d.month == 1
     assert d.day == 28
+    month_name_date = _parse_as_of_date("Dec 31, 2025")
+    assert month_name_date is not None
+    assert month_name_date.year == 2025
+    assert month_name_date.month == 12
+    assert month_name_date.day == 31
     assert _parse_as_of_date("") is None
 
 
@@ -59,6 +70,8 @@ GFFFX,16422.32,14000.00,****5038,Auour Instinct,Worthington,Cetera,Cetera,28-Jan
     assert len(groups) == 1
     assert groups[0]["data_inconsistency"] is True
     assert "synthetic_id" in groups[0]
+    assert groups[0]["cash_values"] == [Decimal("13532.47"), Decimal("14000.00")]
+    assert "Worthington" in groups[0]["data_inconsistency_reason"]
 
 
 def test_non_compounding_total():
@@ -94,3 +107,27 @@ Allspring,WFMIX,1498.59,13532.47,****5038,Auour Insti,Worthington,Cetera Inve,Ce
     assert groups[0]["cash_value"] == Decimal("13532.47")
     assert groups[0]["holdings"][0]["ticker"] == "WFMIX"
     assert groups[0]["holdings"][0]["value"] == Decimal("1498.59")
+
+
+def test_blank_model_is_rejected():
+    """Monitoring uploads require Model so downstream firm totals stay complete."""
+    csv = """Ticker,Market Val,Cash As Position,Account,Model,Advisor,Firm,Enterprise,As Of Date
+WFMIX,1498.59,13532.47,****5038,,Worthington,Cetera,Cetera,28-Jan-26"""
+    with pytest.raises(ValueError, match="missing Model"):
+        parse_aggregated_holdings_csv(csv)
+
+
+def test_negative_market_value_is_rejected():
+    """Monitoring uploads should never contain negative positions."""
+    csv = """Ticker,Market Val,Cash As Position,Account,Model,Advisor,Firm,Enterprise,As Of Date
+WFMIX,-1498.59,13532.47,****5038,Auour Instinct,Worthington,Cetera,Cetera,28-Jan-26"""
+    with pytest.raises(ValueError, match="Negative monitoring amount"):
+        parse_aggregated_holdings_csv(csv)
+
+
+def test_market_value_without_ticker_is_rejected():
+    """A positive position value must identify the ticker it belongs to."""
+    csv = """Ticker,Market Val,Cash As Position,Account,Model,Advisor,Firm,Enterprise,As Of Date
+,1498.59,13532.47,****5038,Auour Instinct,Worthington,Cetera,Cetera,28-Jan-26"""
+    with pytest.raises(ValueError, match="no Ticker"):
+        parse_aggregated_holdings_csv(csv)

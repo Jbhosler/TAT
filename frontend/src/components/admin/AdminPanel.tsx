@@ -7,12 +7,16 @@ import StrategyBridge from '../monitoring/StrategyBridge';
 import AssetClassMapper from './AssetClassMapper';
 import ProductEquivalents from './ProductEquivalents';
 import DataIntegrity from './DataIntegrity';
+import AuthorizedUsers from './AuthorizedUsers';
 
 type Strategy = { id: string; name: string };
 
 const AdminPanel = () => {
-  const [activeTab, setActiveTab] = useState<'uploads' | 'editor' | 'bridge' | 'mapper' | 'equivalents' | 'integrity'>('uploads');
+  const [activeTab, setActiveTab] = useState<'uploads' | 'editor' | 'bridge' | 'mapper' | 'equivalents' | 'integrity' | 'users'>('uploads');
   const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const authRole = localStorage.getItem('auth_role') || 'user';
+  const canAccessAdmin = authRole === 'admin' || authRole === 'super_admin';
+  const canManageUsers = authRole === 'super_admin';
 
   useEffect(() => {
     strategiesAPI.list()
@@ -67,6 +71,11 @@ const AdminPanel = () => {
 
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <div className="px-4 py-6 sm:px-0">
+          {!canAccessAdmin && (
+            <div className="bg-yellow-50 border border-yellow-300 rounded p-4 text-sm text-yellow-800 mb-4">
+              Your account does not have admin permissions.
+            </div>
+          )}
           {/* Tabs */}
           <div className="border-b border-gray-200">
             <nav className="-mb-px flex space-x-8">
@@ -130,12 +139,24 @@ const AdminPanel = () => {
               >
                 Data Integrity
               </button>
+              {canManageUsers && (
+                <button
+                  onClick={() => setActiveTab('users')}
+                  className={`${
+                    activeTab === 'users'
+                      ? 'border-indigo-500 text-indigo-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
+                >
+                  Users
+                </button>
+              )}
             </nav>
           </div>
 
           {/* Tab Content */}
           <div className="mt-6">
-            {activeTab === 'uploads' && (
+            {canAccessAdmin && activeTab === 'uploads' && (
               <AdminUploads
                 strategies={strategies}
                 onStrategiesRefresh={() =>
@@ -148,10 +169,10 @@ const AdminPanel = () => {
                 }
               />
             )}
-            {activeTab === 'editor' && <StrategyEditor />}
-            {activeTab === 'bridge' && <StrategyBridge />}
-            {activeTab === 'mapper' && <AssetClassMapper />}
-            {activeTab === 'equivalents' && (
+            {canAccessAdmin && activeTab === 'editor' && <StrategyEditor />}
+            {canAccessAdmin && activeTab === 'bridge' && <StrategyBridge />}
+            {canAccessAdmin && activeTab === 'mapper' && <AssetClassMapper />}
+            {canAccessAdmin && activeTab === 'equivalents' && (
               <ProductEquivalents
                 strategies={strategies}
                 onStrategiesRefresh={() =>
@@ -164,7 +185,8 @@ const AdminPanel = () => {
                 }
               />
             )}
-            {activeTab === 'integrity' && <DataIntegrity />}
+            {canAccessAdmin && activeTab === 'integrity' && <DataIntegrity />}
+            {canManageUsers && activeTab === 'users' && <AuthorizedUsers />}
           </div>
         </div>
       </main>

@@ -13,22 +13,17 @@
 
 ### 1. Batch Holdings Inserts in Ingest
 
-**Current behavior:** The ingest endpoint processes each account in a loop, calling `db.add(AccountSnapshotHolding(...))` for every holding. With thousands of accounts × ~20 holdings each, this creates tens of thousands of individual INSERT statements (or batched by SQLAlchemy, but still many round-trips).
+**Status (updated):** Ingest now collects holdings and uses `db.bulk_insert_mappings(AccountSnapshotHolding, ...)` (see `ingest_aggregated_holdings` in `backend/api/routes/monitoring.py`). Further work, if needed: tune batch sizes for commits, profile remaining per-account work, or reduce flush frequency.
 
-**Proposed change:**
-- Collect all `AccountSnapshotHolding` rows for a batch of accounts (e.g., 500 accounts)
-- Use `db.bulk_insert_mappings(AccountSnapshotHolding, rows)` instead of per-holding `db.add()`
-- Commit in batches to avoid memory bloat and long transactions
+**Original issue:** Per-holding `db.add()` caused excessive round-trips at scale.
 
-**Investigation steps:**
-1. Add timing logs around the ingest loop to measure current per-account and total time
-2. Identify the batch size that balances memory vs. DB round-trips (suggest starting with 200–500 accounts)
-3. Refactor the ingest loop to accumulate holdings and flush in batches
-4. Re-run with same dataset and compare timings
+**Residual investigation:**
+1. Add timing logs around ingest phases (parse, account upsert, bulk insert, rollup compute) if hotspots are unclear
+2. If memory or transaction length is still an issue, split bulk inserts into chunks (e.g., by account batches)
 
-**Files to modify:** `backend/api/routes/monitoring.py` (ingest endpoint, ~lines 366–430)
+**Files to review:** `backend/api/routes/monitoring.py` (`ingest_aggregated_holdings` and related helpers)
 
-**Risk:** Low. Same data, different insert pattern.
+**Risk:** Low for further batching tweaks; same data, different chunking.
 
 ---
 
@@ -47,7 +42,7 @@
 2. If compute is significant, apply the same parallel pattern used in recalculate
 3. Ensure positions/PE are loaded once and cached (already partially done via `_get_positions_and_pe`)
 
-**Files to modify:** `backend/api/routes/monitoring.py` (ingest endpoint)
+**Files to modify:** `backend/api/routes/monitoring.py` (`ingest_aggregated_holdings` and related helpers)
 
 **Risk:** Low. Logic unchanged; execution parallelized.
 

@@ -4,12 +4,15 @@ Handles both local development (Cloud SQL Proxy) and production (Cloud SQL Conne
 """
 import os
 import logging
+import threading
 from typing import Optional
 from sqlalchemy import create_engine, Engine
 from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import QueuePool
 
 logger = logging.getLogger(__name__)
+_connector = None
+_connector_lock = threading.Lock()
 
 # Optional imports so route modules can load even if DB deps fail (e.g. missing in image)
 try:
@@ -33,11 +36,16 @@ def _clean_secret(value: Optional[str], default: str = "") -> str:
 
 def get_cloud_sql_connector():
     """Initialize Cloud SQL Connector for production."""
+    global _connector
     if not _connector_available or Connector is None:
         raise RuntimeError(
             "Cloud SQL Connector not available. Install cloud-sql-python-connector[pg8000] and pg8000 in the container."
         )
-    return Connector()
+    # Reuse a single Connector process-wide to reduce connection setup overhead.
+    with _connector_lock:
+        if _connector is None:
+            _connector = Connector()
+    return _connector
 
 
 def get_connection_string() -> str:
@@ -80,6 +88,10 @@ def create_engine_with_connector() -> Engine:
     db_name = _clean_secret(os.getenv("DB_NAME"), "tat_database")
     db_user = _clean_secret(os.getenv("DB_USER"), "tat_user")
     db_password = _clean_secret(os.getenv("DB_PASSWORD"), "")
+    pool_size = int(os.getenv("DB_POOL_SIZE", "5"))
+    max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "2"))
+    pool_timeout = int(os.getenv("DB_POOL_TIMEOUT_SECONDS", "30"))
+    pool_recycle = int(os.getenv("DB_POOL_RECYCLE_SECONDS", "1800"))
 
     def getconn():
         connector = get_cloud_sql_connector()
@@ -95,7 +107,12 @@ def create_engine_with_connector() -> Engine:
     engine = create_engine(
         "postgresql+pg8000://",
         creator=getconn,
-        poolclass=NullPool,
+        poolclass=QueuePool,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
+        pool_timeout=pool_timeout,
+        pool_recycle=pool_recycle,
+        pool_pre_ping=True,
     )
     return engine
 

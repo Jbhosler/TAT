@@ -25,6 +25,9 @@ CREATE TYPE asset_class_enum AS ENUM (
     'US Small Cap',
     'International Developed',
     'Emerging Markets',
+    'Infrastructure',
+    'Options Overlay',
+    'Real Estate',
     'Fixed Income',
     'Emg Bond LC',
     'Emg Bond Hedged',
@@ -43,6 +46,14 @@ CREATE TYPE asset_class_enum AS ENUM (
     'High Yield',
     'Private Credit',
     'International Bond',
+    'Bank Loan',
+    'Securitized',
+    'Variable Rate IG',
+    'MBS Floating Rate',
+    'CLO-AAA',
+    'CLO-BBB',
+    'CLO-A',
+    'Commercial Paper',
     'Cash'
 );
 
@@ -100,6 +111,8 @@ CREATE TABLE product_equivalents (
 CREATE TABLE prospects (
     id UUID PRIMARY KEY DEFAULT (md5(random()::text || clock_timestamp()::text)::uuid),
     strategy_id UUID NOT NULL REFERENCES strategies(id),
+    strategy_blend JSONB,
+    strategy_account_links JSONB,
     name VARCHAR(255) NOT NULL,
     total_value NUMERIC(15, 2) NOT NULL,
     document_pdf BYTEA,
@@ -135,6 +148,8 @@ CREATE TABLE transition_results (
     id UUID PRIMARY KEY DEFAULT (md5(random()::text || clock_timestamp()::text)::uuid),
     prospect_id UUID NOT NULL REFERENCES prospects(id) ON DELETE CASCADE,
     strategy_version INTEGER NOT NULL,
+    strategy_versions_snapshot JSONB,
+    target_positions JSONB,
     sell_orders JSONB NOT NULL,
     buy_orders JSONB NOT NULL,
     cash_residual NUMERIC(15, 2) NOT NULL,

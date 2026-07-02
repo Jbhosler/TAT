@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { monitoringAPI } from '../../services/api';
+import { formatIsoDate } from '../../utils/formatIsoDate';
 import HoldingsComparisonModal from './HoldingsComparisonModal';
+import { monitoringAccountPath } from '../../utils/monitoringNav';
 
 type AccountChangeItem = {
   id: string;
@@ -40,22 +42,32 @@ type IngestChanges = {
 };
 
 type UploadChangesProps = {
+  snapshotDates?: string[];
   refreshTrigger?: string | null;
 };
 
-const UploadChanges = ({ refreshTrigger }: UploadChangesProps) => {
+const UploadChanges = ({ snapshotDates = [], refreshTrigger }: UploadChangesProps) => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedPriorDate = searchParams.get('prior_as_of_date') || snapshotDates[1] || null;
+  const selectedCurrentDate = searchParams.get('current_as_of_date') || snapshotDates[0] || null;
   const [data, setData] = useState<IngestChanges | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [holdingsModalAccount, setHoldingsModalAccount] = useState<AccountChangeItem | null>(null);
 
   const load = async () => {
     setLoading(true);
+    setError(null);
     try {
-      const res = await monitoringAPI.ingestChanges();
+      const params = selectedPriorDate && selectedCurrentDate
+        ? { prior_as_of_date: selectedPriorDate, current_as_of_date: selectedCurrentDate }
+        : undefined;
+      const res = await monitoringAPI.ingestChanges(params);
       setData(res.data);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to load ingest changes:', err);
       setData(null);
+      setError(err.response?.data?.detail || 'Failed to load upload changes');
     } finally {
       setLoading(false);
     }
@@ -63,34 +75,73 @@ const UploadChanges = ({ refreshTrigger }: UploadChangesProps) => {
 
   useEffect(() => {
     load();
-  }, [refreshTrigger ?? '']);
+  }, [selectedPriorDate ?? '', selectedCurrentDate ?? '', refreshTrigger ?? '']);
 
   const formatDollars = (v: number | null) =>
     v != null ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) : '—';
-  const formatDate = (d: string | null) => (d ? new Date(d).toLocaleDateString('en-US') : '—');
   const formatPct = (v: number | null) => (v != null ? `${v >= 0 ? '+' : ''}${v.toFixed(2)}%` : '—');
+  const updateComparisonDate = (key: 'prior_as_of_date' | 'current_as_of_date', value: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set('tab', 'uploadchanges');
+      if (value) next.set(key, value);
+      else next.delete(key);
+      return next;
+    }, { replace: true });
+  };
+
+  const comparisonControls = (
+    <div className="flex flex-wrap items-center gap-3">
+      <label className="text-sm font-medium text-gray-700" htmlFor="upload-prior-date">Prior</label>
+      <select
+        id="upload-prior-date"
+        value={selectedPriorDate ?? ''}
+        onChange={(e) => updateComparisonDate('prior_as_of_date', e.target.value)}
+        className="rounded-md border-gray-300 shadow-sm text-sm min-w-[150px]"
+      >
+        <option value="">Select date</option>
+        {snapshotDates.map((d) => (
+          <option key={d} value={d}>{formatIsoDate(d)}</option>
+        ))}
+      </select>
+      <label className="text-sm font-medium text-gray-700" htmlFor="upload-current-date">Current</label>
+      <select
+        id="upload-current-date"
+        value={selectedCurrentDate ?? ''}
+        onChange={(e) => updateComparisonDate('current_as_of_date', e.target.value)}
+        className="rounded-md border-gray-300 shadow-sm text-sm min-w-[150px]"
+      >
+        <option value="">Select date</option>
+        {snapshotDates.map((d) => (
+          <option key={d} value={d}>{formatIsoDate(d)}</option>
+        ))}
+      </select>
+      <button onClick={load} className="text-sm text-indigo-600 hover:text-indigo-800 font-medium">
+        Refresh
+      </button>
+    </div>
+  );
 
   if (loading) {
     return (
       <div className="bg-white shadow rounded-lg p-6">
-        <p className="text-sm text-gray-500">Loading…</p>
+        <div className="flex justify-between items-center gap-4">
+          <p className="text-sm text-gray-500">Loading…</p>
+          {comparisonControls}
+        </div>
       </div>
     );
   }
 
-  if (!data || !data.has_prior) {
+  if (error || !data || !data.has_prior) {
     return (
       <div className="bg-white shadow rounded-lg p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-2">Upload Changes</h3>
+        <div className="mb-4">{comparisonControls}</div>
+        {error && <p className="text-sm text-red-600 mb-2">{error}</p>}
         <p className="text-sm text-gray-500">
-          No prior upload to compare. Ingest at least two different aggregated holdings files (with different as-of dates) to see changes.
+          No prior upload to compare. Ingest at least two different aggregated holdings files with different as-of dates, or select two available dates.
         </p>
-        <button
-          onClick={load}
-          className="mt-4 text-sm text-indigo-600 hover:text-indigo-800 font-medium"
-        >
-          Refresh
-        </button>
       </div>
     );
   }
@@ -137,7 +188,18 @@ const UploadChanges = ({ refreshTrigger }: UploadChangesProps) => {
                   View
                 </button>
               ) : (
-                <Link to={`/monitoring/account/${r.id}`} className="text-indigo-600 hover:text-indigo-800 font-medium">
+                <Link
+                  to={monitoringAccountPath(
+                    r.id,
+                    new URLSearchParams({
+                      tab: 'uploadchanges',
+                      ...(data.current_date ? { as_of_date: data.current_date } : {}),
+                      ...(data.prior_date ? { prior_as_of_date: data.prior_date } : {}),
+                      ...(data.current_date ? { current_as_of_date: data.current_date } : {}),
+                    })
+                  )}
+                  className="text-indigo-600 hover:text-indigo-800 font-medium"
+                >
                   View
                 </Link>
               )}
@@ -152,11 +214,9 @@ const UploadChanges = ({ refreshTrigger }: UploadChangesProps) => {
     <div className="space-y-8">
       <div className="flex justify-between items-center">
         <p className="text-sm text-gray-500">
-          Comparing <strong>{formatDate(data.prior_date)}</strong> (prior) vs <strong>{formatDate(data.current_date)}</strong> (current).
+          Comparing <strong>{formatIsoDate(data.prior_date)}</strong> (prior) vs <strong>{formatIsoDate(data.current_date)}</strong> (current).
         </p>
-        <button onClick={load} className="text-sm text-indigo-600 hover:text-indigo-800 font-medium">
-          Refresh
-        </button>
+        {comparisonControls}
       </div>
 
       {/* Summary */}

@@ -27,6 +27,30 @@ api.interceptors.request.use((config) => {
 
 // Auth API
 export const authAPI = {
+  requestLink: async (email: string) => {
+    const response = await api.post('/api/auth/request-link', { email });
+    return response.data;
+  },
+  verifyLink: async (token: string) => {
+    const response = await api.post('/api/auth/verify-link', { token });
+    const data = response.data || {};
+    if (data.token) {
+      localStorage.setItem('auth_token', data.token);
+      if (data.role) {
+        localStorage.setItem('auth_role', data.role);
+      }
+      if (data.email) {
+        localStorage.setItem('auth_email', data.email);
+      }
+      window.dispatchEvent(new CustomEvent('auth-changed'));
+    }
+    return data;
+  },
+  me: async () => {
+    const response = await api.get('/api/auth/me');
+    return response.data;
+  },
+  // Temporary fallback during migration; can be removed after rollout.
   validatePasscode: async (passcode: string) => {
     try {
       const response = await api.post('/api/auth/validate', { passcode });
@@ -53,6 +77,8 @@ export const authAPI = {
 // Strategies API
 export const strategiesAPI = {
   list: () => api.get('/api/strategies'),
+  blendPreview: (components: Array<{ strategy_id: string; weight: number }>) =>
+    api.post('/api/strategies/blend-preview', { components }),
   get: (id: string) => api.get(`/api/strategies/${id}`),
   create: (data: any) => api.post('/api/strategies', data),
   update: (id: string, data: any) => api.put(`/api/strategies/${id}`, data),
@@ -67,10 +93,37 @@ export const strategiesAPI = {
 export const prospectsAPI = {
   list: () => api.get('/api/prospects'),
   delete: (id: string) => api.delete(`/api/prospects/${id}`),
-  getLinkableAccounts: (id: string) => api.get(`/api/prospects/${id}/linkable-accounts`),
+  getLinkableAccounts: (id: string, strategyId?: string) =>
+    api.get(`/api/prospects/${id}/linkable-accounts`, {
+      params: strategyId ? { strategy_id: strategyId } : undefined,
+    }),
+  getStrategyAccountLinks: (id: string) =>
+    api.get(`/api/prospects/${id}/strategy-account-links`),
+  updateStrategyAccountLinks: (
+    id: string,
+    links: Array<{ strategy_id: string; monitored_account_id: string | null }>
+  ) => api.put(`/api/prospects/${id}/strategy-account-links`, { links }),
   linkAccount: (id: string, monitoredAccountId: string | null) =>
     api.patch(`/api/prospects/${id}/link-account`, { monitored_account_id: monitoredAccountId }),
   get: (id: string) => api.get(`/api/prospects/${id}`),
+  updateTarget: (
+    id: string,
+    body: {
+      strategy_id: string;
+      strategy_blend?: Array<{ strategy_id: string; weight: number }>;
+    }
+  ) => api.patch(`/api/prospects/${id}/target`, body),
+  updateHoldings: (
+    id: string,
+    body: {
+      name?: string;
+      holdings: Array<{
+        ticker: string;
+        value: number;
+        unrealized_gain_loss: number;
+      }>;
+    }
+  ) => api.put(`/api/prospects/${id}/holdings`, body),
   getDocument: (id: string) => api.get(`/api/prospects/${id}/document`, { responseType: 'blob' }),
   uploadDocument: (id: string, file: File) => {
     const formData = new FormData();
@@ -79,13 +132,30 @@ export const prospectsAPI = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
-  upload: (strategyId: string, name: string, csvContent: string) =>
+  upload: (
+    strategyId: string,
+    name: string,
+    csvContent: string,
+    strategyBlend?: Array<{ strategy_id: string; weight: number }>
+  ) =>
     api.post('/api/prospects/upload', csvContent, {
-      params: { strategy_id: strategyId, name },
+      params: {
+        strategy_id: strategyId,
+        name,
+        ...(strategyBlend
+          ? { strategy_blend: JSON.stringify(strategyBlend) }
+          : {}),
+      },
       headers: { 'Content-Type': 'text/csv' },
     }),
-  classify: (id: string) => api.post(`/api/prospects/${id}/classify`),
+  getHoldings: (id: string) => api.get(`/api/prospects/${id}/holdings`),
+  classify: (id: string, sidePocketHoldingIds: string[]) =>
+    api.post(`/api/prospects/${id}/classify`, {
+      side_pocket_holding_ids: sidePocketHoldingIds,
+    }),
   getUnmapped: (id: string) => api.get(`/api/prospects/${id}/unmapped`),
+  getMappingReview: (id: string) => api.get(`/api/prospects/${id}/mapping-review`),
+  getMappings: (id: string) => api.get(`/api/prospects/${id}/mappings`),
   saveMapping: (id: string, mapping: any) =>
     api.post(`/api/prospects/${id}/map`, mapping),
   markForcedSale: (id: string, legacyTicker: string) =>
@@ -93,12 +163,24 @@ export const prospectsAPI = {
   calculate: (id: string) => api.post(`/api/prospects/${id}/calculate`),
   getResult: (id: string) => api.get(`/api/prospects/${id}/result`),
   staleCheck: (id: string) => api.get(`/api/prospects/${id}/stale-check`),
-  getReportPdf: (id: string) =>
-    api.get(`/api/prospects/${id}/report-pdf`, { responseType: 'blob' }),
+  getReportPdf: (id: string, additionalText?: string) =>
+    api.get(`/api/prospects/${id}/report-pdf`, {
+      params: additionalText ? { additional_text: additionalText } : undefined,
+      responseType: 'blob',
+    }),
 };
 
 // Admin API
 export const adminAPI = {
+  listAuthorizedUsers: () => api.get('/api/admin/authorized-users'),
+  createAuthorizedUser: (body: { email: string; display_name?: string; role: 'user' | 'admin' | 'super_admin' }) =>
+    api.post('/api/admin/authorized-users', body),
+  updateAuthorizedUser: (
+    email: string,
+    body: { display_name?: string; role?: 'user' | 'admin' | 'super_admin'; is_active?: boolean },
+  ) => api.patch(`/api/admin/authorized-users/${encodeURIComponent(email)}`, body),
+  deactivateAuthorizedUser: (email: string) =>
+    api.delete(`/api/admin/authorized-users/${encodeURIComponent(email)}`),
   getAssetClasses: () => api.get('/api/admin/asset-classes'),
   getProductEquivalents: (strategyId: string) =>
     api.get(`/api/admin/product-equivalents/${strategyId}`),
@@ -160,7 +242,9 @@ export const monitoringAPI = {
       timeout: 600000, // 10 min - recalculate can be slow with many accounts
     }),
   lastIngest: () => api.get<{ last_ingest_at: string | null; as_of_date: string | null }>('/api/monitoring/last-ingest'),
-  ingestChanges: () =>
+  snapshotDates: () =>
+    api.get<{ dates: string[]; latest_date: string | null }>('/api/monitoring/snapshot-dates'),
+  ingestChanges: (params?: { prior_as_of_date?: string; current_as_of_date?: string }) =>
     api.get<{
       has_prior: boolean;
       prior_date: string | null;
@@ -177,10 +261,10 @@ export const monitoringAPI = {
       removed_advisers: string[];
       adviser_account_changes: Array<{ adviser: string; prior_account_count: number; current_account_count: number; delta: number }>;
       accounts_with_holdings_changes: Array<{ id: string; synthetic_id: string; advisor: string | null; partial_account_number: string | null; model_name: string | null; prior_value: number | null; current_value: number | null; value_change_pct: number | null }>;
-    }>('/api/monitoring/ingest-changes'),
+    }>('/api/monitoring/ingest-changes', { params }),
   listAccounts: (params?: { as_of_date?: string; mapped_only?: boolean }) =>
     api.get('/api/monitoring/accounts', { params }),
-  totalFirm: (params?: { as_of_date?: string }) =>
+  totalFirm: (params?: { as_of_date?: string; limit?: number; offset?: number }) =>
     api.get<{
       summary_by_model: Array<{ model_name: string; total_value: number; account_count: number }>;
       accounts: Array<{
@@ -193,6 +277,35 @@ export const monitoringAPI = {
         registration_type: string | null;
       }>;
     }>('/api/monitoring/total-firm', { params }),
+  totalFirmYtd: (params?: { as_of_date?: string }) =>
+    api.get<{
+      has_baseline: boolean;
+      baseline_date: string | null;
+      current_date: string | null;
+      strategies: Array<{
+        strategy_name: string;
+        start_account_count: number;
+        current_account_count: number;
+        account_count_delta: number;
+        start_aum: number;
+        current_aum: number;
+        aum_delta: number;
+        aum_delta_pct: number | null;
+      }>;
+      advisers_won: string[];
+      advisers_lost: string[];
+    }>('/api/monitoring/total-firm-ytd', { params }),
+  searchAccountsBySyntheticId: (syntheticId: string, params?: { as_of_date?: string }) =>
+    api.get<Array<{
+      id: string;
+      synthetic_id: string;
+      friendly_name: string | null;
+      strategy_name: string | null;
+      advisor: string | null;
+      account_display: string | null;
+      total_value: number | null;
+      as_of_date: string | null;
+    }>>('/api/monitoring/accounts/search', { params: { synthetic_id: syntheticId, ...params } }),
   getAccount: (id: string) => api.get(`/api/monitoring/accounts/${id}`),
   getLinkedProspects: (accountId: string) =>
     api.get<Array<{ id: string; name: string; has_document: boolean }>>(`/api/monitoring/accounts/${accountId}/linked-prospects`),
@@ -200,13 +313,13 @@ export const monitoringAPI = {
     api.patch(`/api/monitoring/accounts/${id}`, body),
   getAccountSnapshots: (id: string, params?: { as_of_date?: string }) =>
     api.get(`/api/monitoring/accounts/${id}/snapshots`, { params }),
-  concentrationReport: (params?: { as_of_date?: string }) =>
+  concentrationReport: (params?: { as_of_date?: string; limit?: number; offset?: number }) =>
     api.get('/api/monitoring/concentration-report', { params }),
   concentrationReportAccounts: (ticker: string, grade: number, params?: { as_of_date?: string }) =>
     api.get(`/api/monitoring/concentration-report/${encodeURIComponent(ticker)}/accounts`, { params: { grade, ...params } }),
-  topOffenders: (params?: { as_of_date?: string }) =>
+  topOffenders: (params?: { as_of_date?: string; limit?: number; offset?: number }) =>
     api.get('/api/monitoring/top-offenders', { params }),
-  unmappedTickers: (params?: { as_of_date?: string }) =>
+  unmappedTickers: (params?: { as_of_date?: string; limit?: number; offset?: number }) =>
     api.get('/api/monitoring/unmapped-tickers', { params }),
   unmappedTickerAccounts: (ticker: string, params?: { as_of_date?: string }) =>
     api.get<Array<{
@@ -218,9 +331,9 @@ export const monitoringAPI = {
       value: number;
       pct_of_equivalent_total: number;
     }>>(`/api/monitoring/unmapped-tickers/${encodeURIComponent(ticker)}/accounts`, { params }),
-  unusedEquivalents: (params?: { as_of_date?: string }) =>
+  unusedEquivalents: (params?: { as_of_date?: string; limit?: number; offset?: number }) =>
     api.get<Array<{ legacy_ticker: string; model_ticker: string; grade: number | null; strategy_name: string; strategy_id: string }>>('/api/monitoring/unused-equivalents', { params }),
-  equivalentsUsage: (params?: { as_of_date?: string }) =>
+  equivalentsUsage: (params?: { as_of_date?: string; limit?: number; offset?: number }) =>
     api.get<Array<{
       id: string;
       legacy_ticker: string;
@@ -250,7 +363,12 @@ export const monitoringAPI = {
     }>>(`/api/monitoring/equivalents-usage/${equivalentId}/accounts`, { params }),
   listAdvisers: () => api.get<string[]>('/api/monitoring/advisers'),
   getAdviserAccounts: (adviser: string, params?: { as_of_date?: string }) =>
-    api.get<{ accounts: Array<{ account_id: string; partial_account_number: string | null; account_value: number; legacy_ticker: string; model_ticker: string }>; legacy_totals: Array<{ legacy_ticker: string; total_value: number; account_count: number }> }>('/api/monitoring/adviser-accounts', { params: { adviser, ...params } }),
+    api.get<{
+      summary: { total_accounts: number; total_aum: number; accounts_with_equivalents: number };
+      summary_by_strategy: Array<{ strategy_name: string; total_value: number; account_count: number }>;
+      accounts: Array<{ account_id: string; partial_account_number: string | null; account_value: number; has_equivalents: boolean; strategy_name: string | null; registration_type: string | null }>;
+      legacy_totals: Array<{ legacy_ticker: string; total_value: number; account_count: number }>;
+    }>('/api/monitoring/adviser-accounts', { params: { adviser, ...params } }),
   // Equivalent Review
   equivalentReview: (params?: { strategy_id?: string }) =>
     api.get<Array<{

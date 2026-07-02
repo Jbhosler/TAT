@@ -157,16 +157,25 @@ ALTER TYPE asset_class_enum ADD VALUE IF NOT EXISTS 'International Bond';
 | `init-db-safe.sql` | Same as above, but drops tables first (for clean reinstall) |
 | `add-fixed-income-asset-classes.sql` | Adds all fixed income subclasses (Emg Bond LC, ST Corp, etc.) |
 | `add-international-bond.sql` | Adds only International Bond (if you already ran fixed income migration) |
+| `add-equity-and-fi-asset-classes.sql` | Adds Infrastructure, Options Overlay, Real Estate, Bank Loan, Securitized |
 | `add-forced-sale-enum.sql` | Adds `forced_sale` to mapping_status_enum |
 | `add-discovery-models.sql` | Adds discovery_models table and related columns |
 | `add-monitoring-tables.sql` | Adds monitoring tables |
-| ... | Other migrations in `cloud/` as needed |
+| `add-monitoring-ingest-runs.sql` | Ingest run metadata / checksum tracking |
+| `add-prospect-document.sql` | Prospect document storage |
+| `add-prospect-linked-account.sql` | Link prospects to monitored accounts |
+| `add-pre-post-holdings.sql` | Pre/post transition holding columns |
+| `add-registration-type.sql` | Registration type fields for monitored accounts |
+| `add-equivalent-metrics.sql` | Product equivalent performance metrics columns |
+| `add-transition-equivalent-usage.sql` | `equivalent_usage` JSONB on `transition_results` |
+| `grant-app-user.sql` | Grants for app DB user after init |
+| *(other `add-*.sql`)* | See `cloud/` directory for the full list |
 
 **Which migration to run?**
 
 - **Brand new database:** Run `init-db.sql` (or `init-db-safe.sql`).
 - **Existing database, need International Bond only:** Run `add-international-bond.sql`.
-- **Existing database, never ran fixed income migration:** Run `add-fixed-income-asset-classes.sql` (it includes International Bond).
+- **Existing database, need new equity/FI classes (Infrastructure, Options Overlay, Real Estate, Bank Loan, Securitized):** Run `add-equity-and-fi-asset-classes.sql`.
 
 ---
 

@@ -222,35 +222,35 @@ def parse_product_equivalents_csv(csv_content: str) -> List[Dict[str, Any]]:
 
 
 def _parse_aggregated_amount(s: str) -> Decimal:
-    """Strip commas and parse numeric value; empty/N/A -> 0."""
+    """Parse a non-negative monitoring amount; empty/N/A values are treated as 0."""
     if not s or not isinstance(s, str):
         return Decimal("0")
     s = str(s).strip().replace(",", "").replace("$", "").strip()
     if not s or s.upper() in ("N/A", "NA", "-", "--", ""):
         return Decimal("0")
+    if s.startswith("(") and s.endswith(")"):
+        raise ValueError(f"Negative monitoring amount is not allowed: {s}")
     try:
-        return Decimal(s)
-    except Exception:
-        return Decimal("0")
+        amount = Decimal(s)
+    except Exception as exc:
+        raise ValueError(f"Invalid monitoring amount: {s}") from exc
+    if amount < 0:
+        raise ValueError(f"Negative monitoring amount is not allowed: {s}")
+    return amount
 
 
 def _parse_as_of_date(s: str) -> Optional[datetime]:
-    """Parse As Of Date DD-Mon-YY (e.g. 28-Jan-26). Returns date or None."""
+    """Parse common As Of Date formats. Returns datetime or None."""
     if not s or not isinstance(s, str):
         return None
     s = str(s).strip()
     if not s:
         return None
-    try:
-        dt = datetime.strptime(s, "%d-%b-%y")
-        return dt
-    except ValueError:
-        pass
-    try:
-        dt = datetime.strptime(s, "%d-%b-%Y")
-        return dt
-    except ValueError:
-        pass
+    for fmt in ("%d-%b-%y", "%d-%b-%Y", "%b %d, %Y", "%b %d, %y", "%m/%d/%Y", "%m/%d/%y"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
     return None
 
 
@@ -338,6 +338,11 @@ def _synthetic_id(account: str, advisor: str, model: str, firm: str, enterprise:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 
+def _normalize_aggregated_text(value: str) -> str:
+    """Collapse repeated whitespace without changing display casing."""
+    return " ".join(str(value or "").strip().split())
+
+
 def parse_aggregated_holdings_csv(csv_content: str) -> List[Dict[str, Any]]:
     """
     Parse aggregated holdings CSV (e.g. rows6923.csv) for Monitoring ingest.
@@ -373,11 +378,21 @@ def parse_aggregated_holdings_csv(csv_content: str) -> List[Dict[str, Any]]:
     for row in lines[1:]:
         if len(row) < 2 or not any(str(v).strip() for v in row):
             continue
-        account = _cell(row, "account")
-        advisor = _cell(row, "advisor")
-        model = _cell(row, "model")
-        firm = _cell(row, "firm")
-        enterprise = _cell(row, "enterprise")
+        account = _normalize_aggregated_text(_cell(row, "account"))
+        advisor = _normalize_aggregated_text(_cell(row, "advisor"))
+        model = _normalize_aggregated_text(_cell(row, "model"))
+        firm = _normalize_aggregated_text(_cell(row, "firm"))
+        enterprise = _normalize_aggregated_text(_cell(row, "enterprise"))
+        if not account:
+            raise ValueError("Monitoring CSV row is missing Account.")
+        if not model:
+            raise ValueError(f"Monitoring CSV row for account {account} is missing Model.")
+        if not advisor:
+            raise ValueError(f"Monitoring CSV row for account {account} / model {model} is missing Advisor.")
+        if not firm:
+            raise ValueError(f"Monitoring CSV row for account {account} / model {model} is missing Firm.")
+        if not enterprise:
+            raise ValueError(f"Monitoring CSV row for account {account} / model {model} is missing Enterprise.")
         sid = _synthetic_id(account, advisor, model, firm, enterprise)
         if sid not in rows_by_id:
             rows_by_id[sid] = []
@@ -428,6 +443,12 @@ def parse_aggregated_holdings_csv(csv_content: str) -> List[Dict[str, Any]]:
                 "as_of_date": as_of_date,
                 "holdings": [],
                 "data_inconsistency": True,
+                "data_inconsistency_reason": (
+                    "Cash As Position differs within account group "
+                    f"{account_display} / {advisor} / {external_model_name}: "
+                    f"{', '.join(str(v) for v in sorted(set(cash_values)))}"
+                ),
+                "cash_values": sorted(set(cash_values)),
             })
             continue
 
@@ -436,6 +457,11 @@ def parse_aggregated_holdings_csv(csv_content: str) -> List[Dict[str, Any]]:
         for r in group:
             ticker = (r.get("ticker") or "").strip()
             val = _parse_aggregated_amount(r.get("market_val_str") or "0")
+            if not ticker and val > 0:
+                raise ValueError(
+                    f"Monitoring CSV row for account {account_display} / model {external_model_name} "
+                    "has Market Value but no Ticker."
+                )
             if ticker and val > 0:
                 holdings.append({"ticker": ticker, "value": val})
         sum_market_val = sum(h["value"] for h in holdings)

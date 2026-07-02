@@ -182,10 +182,13 @@ const StrategyEditor = () => {
 
   const assetClassesFallback = assetClasses.length > 0 ? assetClasses : [
     'US Large Core', 'US Large Growth', 'US Large Value', 'US Midcap Growth', 'US Midcap Value',
-    'US Small Cap', 'International Developed', 'Emerging Markets', 'Fixed Income',
+    'US Small Cap', 'International Developed', 'Emerging Markets',
+    'Infrastructure', 'Options Overlay', 'Real Estate', 'Fixed Income',
     'Emg Bond LC', 'Emg Bond Hedged', 'ST Corp', 'IT Corp', 'LT Corp', 'ST Govt', 'IT Govt', 'LT Govt',
     'Tactical Cash', 'Ultra ST Bond', 'Aggregate', 'Mortgage Backed', 'Inflation Protection',
-    'ST High Yield', 'High Yield', 'Private Credit', 'International Bond', 'Cash',
+    'ST High Yield', 'High Yield', 'Private Credit', 'International Bond',
+    'Bank Loan', 'Securitized', 'Variable Rate IG', 'MBS Floating Rate',
+    'CLO-AAA', 'CLO-BBB', 'CLO-A', 'Commercial Paper', 'Cash',
   ];
 
   return (

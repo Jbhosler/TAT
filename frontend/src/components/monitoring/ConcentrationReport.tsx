@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { monitoringAPI } from '../../services/api';
+import { formatIsoDate } from '../../utils/formatIsoDate';
+import { monitoringAccountPath } from '../../utils/monitoringNav';
 
 type ConcentrationItem = {
   ticker: string;
@@ -26,12 +28,13 @@ type UnmappedItem = {
 };
 
 type ConcentrationReportProps = {
+  asOfDate?: string | null;
   /** When this changes (e.g. after ingest), concentration data is refetched. */
   refreshTrigger?: string | null;
 };
 
-const ConcentrationReport = ({ refreshTrigger }: ConcentrationReportProps) => {
-  const [asOfDate, setAsOfDate] = useState<string | null>(null);
+const ConcentrationReport = ({ asOfDate, refreshTrigger }: ConcentrationReportProps) => {
+  const [searchParams] = useSearchParams();
   const [concentration, setConcentration] = useState<ConcentrationItem[]>([]);
   const [topOffenders, setTopOffenders] = useState<TopOffenderItem[]>([]);
   const [unmapped, setUnmapped] = useState<UnmappedItem[]>([]);
@@ -40,11 +43,11 @@ const ConcentrationReport = ({ refreshTrigger }: ConcentrationReportProps) => {
   const load = async () => {
     setLoading(true);
     try {
-      const params = asOfDate ? { as_of_date: asOfDate } : undefined;
+      const params = asOfDate ? { as_of_date: asOfDate } : {};
       const [concRes, offRes, unmRes] = await Promise.all([
-        monitoringAPI.concentrationReport(params),
-        monitoringAPI.topOffenders(params),
-        monitoringAPI.unmappedTickers(params),
+        monitoringAPI.concentrationReport({ ...params, limit: 1000, offset: 0 }),
+        monitoringAPI.topOffenders({ ...params, limit: 1000, offset: 0 }),
+        monitoringAPI.unmappedTickers({ ...params, limit: 1000, offset: 0 }),
       ]);
       setConcentration(concRes.data || []);
       setTopOffenders(offRes.data || []);
@@ -65,22 +68,18 @@ const ConcentrationReport = ({ refreshTrigger }: ConcentrationReportProps) => {
 
   const formatDollars = (v: number) =>
     Number(v).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-  const formatDate = (d: string | null) => (d ? new Date(d).toLocaleDateString('en-US') : '—');
+  const accountReturnParams = new URLSearchParams(searchParams);
+  accountReturnParams.set('tab', 'concentration');
+  if (asOfDate) accountReturnParams.set('as_of_date', asOfDate);
+  const concentrationAccountParams = new URLSearchParams(accountReturnParams);
 
   return (
     <div className="space-y-8">
       <div className="flex justify-between items-center">
         <p className="text-sm text-gray-500">
-          Total exposure to equivalent holdings (Grade 0, 1 & 2). Excludes model tickers held directly. Use latest snapshot or pick a date.
+          Total exposure to equivalent holdings (Grade 0, 1 & 2). Excludes model tickers held directly.
         </p>
         <div className="flex items-center gap-2">
-          <label className="text-sm text-gray-600">As of date:</label>
-          <input
-            type="date"
-            value={asOfDate ?? ''}
-            onChange={(e) => setAsOfDate(e.target.value || null)}
-            className="rounded-md border-gray-300 shadow-sm text-sm"
-          />
           <button
             onClick={load}
             className="text-sm text-indigo-600 hover:text-indigo-800 font-medium"
@@ -127,7 +126,7 @@ const ConcentrationReport = ({ refreshTrigger }: ConcentrationReportProps) => {
                         <td className="px-4 py-2 text-sm text-right text-gray-900">${formatDollars(row.total_value)}</td>
                         <td className="px-4 py-2 text-sm text-right text-gray-600">
                           <Link
-                            to={`/monitoring/concentration/accounts/${encodeURIComponent(row.ticker)}/${row.grade}${asOfDate ? `?as_of_date=${asOfDate}` : ''}`}
+                            to={`/monitoring/concentration/accounts/${encodeURIComponent(row.ticker)}/${row.grade}?${concentrationAccountParams.toString()}`}
                             className="text-indigo-600 hover:text-indigo-800 font-medium"
                           >
                             {row.account_count}
@@ -175,10 +174,10 @@ const ConcentrationReport = ({ refreshTrigger }: ConcentrationReportProps) => {
                         <td className="px-4 py-2 text-sm text-right font-medium text-gray-900">
                           ${formatDollars(row.total_grade2_value)}
                         </td>
-                        <td className="px-4 py-2 text-sm text-gray-500">{formatDate(row.as_of_date)}</td>
+                        <td className="px-4 py-2 text-sm text-gray-500">{formatIsoDate(row.as_of_date)}</td>
                         <td className="px-4 py-2 text-sm text-right">
                           <Link
-                            to={`/monitoring/account/${row.account_id}`}
+                            to={monitoringAccountPath(row.account_id, accountReturnParams)}
                             className="text-indigo-600 hover:text-indigo-800 font-medium"
                           >
                             View

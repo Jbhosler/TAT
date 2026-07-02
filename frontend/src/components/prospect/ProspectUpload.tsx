@@ -1,11 +1,20 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { prospectsAPI } from '../../services/api';
+import StrategyBlendSelector, {
+  blendPayloadFromSelection,
+  isStrategySelectionReady,
+  primaryStrategyIdFromSelection,
+  type StrategySelection,
+} from './StrategyBlendSelector';
 
 interface ProspectUploadProps {
   strategies: any[];
-  selectedStrategyId: string;
-  onStrategyChange: (id: string) => void;
+  strategySelection: StrategySelection;
+  onStrategySelectionChange: (selection: StrategySelection) => void;
   onUploadComplete: (prospectId: string) => void;
+  /** When set, edit an existing prospect's holdings instead of creating a new one */
+  prospectId?: string | null;
+  onHoldingsSaved?: () => void;
   /** When true, strategy is chosen on Dashboard; hide duplicate selector here */
   hideStrategySelector?: boolean;
 }
@@ -20,12 +29,16 @@ const CSV_HEADER = 'Ticker,Value ($),Unrealized Gain/Loss ($)';
 
 const ProspectUpload = ({
   strategies,
-  selectedStrategyId,
-  onStrategyChange,
+  strategySelection,
+  onStrategySelectionChange,
   onUploadComplete,
+  prospectId = null,
+  onHoldingsSaved,
   hideStrategySelector = false,
 }: ProspectUploadProps) => {
+  const isEditMode = Boolean(prospectId);
   const [prospectName, setProspectName] = useState('');
+  const [loadingExisting, setLoadingExisting] = useState(false);
   const [csvContent, setCsvContent] = useState('');
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -34,6 +47,55 @@ const ProspectUpload = ({
   const [manualHoldings, setManualHoldings] = useState<ManualHolding[]>([
     { ticker: '', value: '', unrealized_gain_loss: '' },
   ]);
+
+  useEffect(() => {
+    if (!prospectId) return;
+    let cancelled = false;
+    (async () => {
+      setLoadingExisting(true);
+      try {
+        const res = await prospectsAPI.get(prospectId);
+        if (cancelled) return;
+        setProspectName(res.data.name || '');
+        const rows = (res.data.holdings || []).map((h: any) => ({
+          ticker: h.ticker,
+          value: String(h.value),
+          unrealized_gain_loss: String(h.unrealized_gain_loss ?? 0),
+        }));
+        setManualHoldings(rows.length > 0 ? rows : [{ ticker: '', value: '', unrealized_gain_loss: '' }]);
+        setInputMode('manual');
+      } catch (err) {
+        console.error('Failed to load prospect holdings:', err);
+      } finally {
+        if (!cancelled) setLoadingExisting(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [prospectId]);
+
+  const applyCsvToManualHoldings = (content: string) => {
+    const lines = content.split('\n').filter((line) => line.trim());
+    if (lines.length < 2) return false;
+    const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
+    const tickerIdx = headers.findIndex((h) => h.includes('ticker'));
+    const valueIdx = headers.findIndex((h) => h.includes('value'));
+    const gainIdx = headers.findIndex((h) => h.includes('gain') || h.includes('loss'));
+    if (tickerIdx < 0 || valueIdx < 0) return false;
+    const rows = lines.slice(1).map((line) => {
+      const values = line.split(',').map((v) => v.trim());
+      return {
+        ticker: values[tickerIdx] || '',
+        value: (values[valueIdx] || '').replace(/[$,]/g, ''),
+        unrealized_gain_loss: (gainIdx >= 0 ? values[gainIdx] || '0' : '0').replace(/[$,]/g, ''),
+      };
+    }).filter((r) => r.ticker);
+    if (rows.length === 0) return false;
+    setManualHoldings(rows);
+    setInputMode('manual');
+    return true;
+  };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -44,6 +106,9 @@ const ProspectUpload = ({
       const content = event.target?.result as string;
       setCsvContent(content);
       parseCSV(content);
+      if (isEditMode) {
+        applyCsvToManualHoldings(content);
+      }
     };
     reader.readAsText(file);
   };
@@ -101,10 +166,13 @@ const ProspectUpload = ({
   };
 
   const handleUpload = async () => {
-    if (!selectedStrategyId) {
-      alert('Please select a strategy');
+    if (!isStrategySelectionReady(strategySelection)) {
+      alert('Please select a strategy or complete a valid blend (weights must sum to 100%)');
       return;
     }
+
+    const strategyId = primaryStrategyIdFromSelection(strategySelection);
+    const strategyBlend = blendPayloadFromSelection(strategySelection);
 
     if (!prospectName.trim()) {
       alert('Please enter a prospect name');
@@ -123,19 +191,48 @@ const ProspectUpload = ({
 
     setLoading(true);
     try {
-      const response = await prospectsAPI.upload(selectedStrategyId, prospectName, content);
-      const prospectId = response.data.id;
-      if (pdfFile) {
-        try {
-          await prospectsAPI.uploadDocument(prospectId, pdfFile);
-        } catch (docErr: any) {
-          alert(docErr.response?.data?.detail || 'Prospect created but PDF upload failed.');
+      if (isEditMode && prospectId) {
+        const holdings = manualHoldings
+          .filter((r) => r.ticker.trim() !== '' && r.value.trim() !== '')
+          .map((r) => ({
+            ticker: r.ticker.trim(),
+            value: parseFloat(r.value.trim().replace(/[$,]/g, '')) || 0,
+            unrealized_gain_loss:
+              parseFloat(r.unrealized_gain_loss.trim().replace(/[$,]/g, '')) || 0,
+          }));
+        await prospectsAPI.updateHoldings(prospectId, {
+          name: prospectName.trim(),
+          holdings,
+        });
+        if (pdfFile) {
+          try {
+            await prospectsAPI.uploadDocument(prospectId, pdfFile);
+          } catch (docErr: any) {
+            alert(docErr.response?.data?.detail || 'Holdings saved but PDF upload failed.');
+          }
+          setPdfFile(null);
         }
-        setPdfFile(null);
+        onHoldingsSaved?.();
+      } else {
+        const response = await prospectsAPI.upload(
+          strategyId,
+          prospectName,
+          content,
+          strategyBlend
+        );
+        const newProspectId = response.data.id;
+        if (pdfFile) {
+          try {
+            await prospectsAPI.uploadDocument(newProspectId, pdfFile);
+          } catch (docErr: any) {
+            alert(docErr.response?.data?.detail || 'Prospect created but PDF upload failed.');
+          }
+          setPdfFile(null);
+        }
+        onUploadComplete(newProspectId);
       }
-      onUploadComplete(prospectId);
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to upload prospect');
+      alert(err.response?.data?.detail || (isEditMode ? 'Failed to save holdings' : 'Failed to upload prospect'));
     } finally {
       setLoading(false);
     }
@@ -143,30 +240,22 @@ const ProspectUpload = ({
 
   const isSubmitDisabled =
     loading ||
-    !selectedStrategyId ||
+    (!isEditMode && !isStrategySelectionReady(strategySelection)) ||
     !prospectName.trim() ||
-    (inputMode === 'upload' ? !csvContent : !canSubmitManual());
+    (isEditMode ? !canSubmitManual() : inputMode === 'upload' ? !csvContent : !canSubmitManual());
+
+  if (loadingExisting) {
+    return <p className="text-sm text-gray-600">Loading holdings…</p>;
+  }
 
   return (
     <div className="space-y-6">
       {!hideStrategySelector && (
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Select Strategy
-          </label>
-          <select
-            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-            value={selectedStrategyId}
-            onChange={(e) => onStrategyChange(e.target.value)}
-          >
-            <option value="">Select a strategy</option>
-            {strategies.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </div>
+        <StrategyBlendSelector
+          strategies={strategies}
+          selection={strategySelection}
+          onChange={onStrategySelectionChange}
+        />
       )}
 
       <div>
@@ -317,6 +406,9 @@ const ProspectUpload = ({
               </label>
               <p className="text-xs text-gray-500 mb-2">
                 Format: Ticker, Value ($), Unrealized Gain/Loss ($)
+                {isEditMode && (
+                  <> — CSV rows load into the table below; click <strong>Save holdings</strong> when ready.</>
+                )}
               </p>
               <input
                 type="file"
@@ -370,7 +462,13 @@ const ProspectUpload = ({
           disabled={isSubmitDisabled}
           className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
         >
-          {loading ? 'Creating prospect...' : 'Create prospect'}
+          {loading
+            ? isEditMode
+              ? 'Saving holdings...'
+              : 'Creating prospect...'
+            : isEditMode
+              ? 'Save holdings'
+              : 'Create prospect'}
         </button>
       </div>
   );

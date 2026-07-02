@@ -1,5 +1,7 @@
 # Quick Start - Google Cloud Deployment
 
+**Windows:** Prefer WSL/Git Bash for the bash flow below, or see `cloud/DEPLOY_WINDOWS.md`. There is also `cloud/deploy-all.ps1` for a PowerShell-oriented path.
+
 ## One-Command Deployment
 
 ```bash
@@ -46,11 +48,29 @@ chmod +x deploy.sh
 # Note the backend URL from output
 ```
 
-### 5. Update Frontend API URL
-Edit `frontend/src/services/api.ts`:
-```typescript
-const API_BASE_URL = 'https://tat-backend-XXXXX.a.run.app';
+### 5. Point the frontend at the backend
+
+`frontend/src/services/api.ts` uses `import.meta.env.VITE_API_URL` when set; in production it falls back to a default Cloud Run URL if the variable is missing.
+
+**Recommended:** set the URL at build time (no source edit):
+
+```bash
+cd frontend
+export VITE_API_URL=https://YOUR-BACKEND-URL.a.run.app
+npm run build
 ```
+
+Windows PowerShell:
+
+```powershell
+cd frontend
+$env:VITE_API_URL="https://YOUR-BACKEND-URL.a.run.app"
+npm run build
+```
+
+Then deploy the `dist/` output with `cloud/deploy-frontend.sh` (or your usual upload step).
+
+**Alternative:** change the production fallback in `api.ts` only if you intentionally commit a stable backend URL.
 
 ### 6. Deploy Frontend
 ```bash

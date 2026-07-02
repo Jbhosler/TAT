@@ -8,10 +8,10 @@ spec:
   template:
     metadata:
       annotations:
-        autoscaling.knative.dev/minScale: "1"
-        autoscaling.knative.dev/maxScale: "10"
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "20"
     spec:
-      containerConcurrency: 80
+      containerConcurrency: 20
       timeoutSeconds: 900
       containers:
       - image: gcr.io/tax-aware-transition-tool/tat-backend:latest
@@ -29,6 +29,10 @@ spec:
           value: tax-aware-transition-tool:us-central1:tat-db-instance
         - name: USE_CLOUD_SQL_PROXY
           value: "false"
+        - name: FROM_EMAIL
+          value: noreply@auourinvest.com
+        - name: PORTAL_URL
+          value: https://auourinvest.com
         - name: DB_NAME
           valueFrom:
             secretKeyRef:
@@ -49,13 +53,23 @@ spec:
             secretKeyRef:
               name: Alpha-API
               key: latest
+        - name: RESEND_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: resend-api-key
+              key: latest
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: jwt-secret
+              key: latest
         resources:
           limits:
-            cpu: "2"
-            memory: 2Gi
-          requests:
             cpu: "1"
             memory: 1Gi
+          requests:
+            cpu: "500m"
+            memory: 512Mi
         startupProbe:
           httpGet:
             path: /api/health

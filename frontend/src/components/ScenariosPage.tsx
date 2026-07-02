@@ -200,7 +200,7 @@ const ScenariosPage = () => {
         <div className="mb-6">
           <h2 className="text-2xl font-bold text-gray-900">Saved Scenarios</h2>
           <p className="mt-1 text-sm text-gray-500">
-            All prospect scenarios. Click View results to open the transition result and tax summary.
+            All prospect scenarios. Use View results in the Result column to open the transition summary and tax report.
           </p>
         </div>
 
@@ -220,7 +220,7 @@ const ScenariosPage = () => {
             No saved scenarios yet. Create a prospect on the Dashboard and run through the flow to save a scenario.
           </div>
         ) : (
-          <div className="bg-white shadow rounded-lg overflow-hidden">
+          <div className="bg-white shadow rounded-lg overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
@@ -267,9 +267,14 @@ const ScenariosPage = () => {
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm">
                       {s.has_result ? (
-                        <span className="text-green-600">Yes</span>
+                        <Link
+                          to={`/prospect/${s.id}`}
+                          className="text-indigo-600 hover:text-indigo-800 font-medium"
+                        >
+                          View results
+                        </Link>
                       ) : (
-                        <span className="text-gray-400">No</span>
+                        <span className="text-gray-400">Not calculated</span>
                       )}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm">
@@ -344,6 +349,13 @@ const ScenariosPage = () => {
                             Change
                           </button>
                         </span>
+                      ) : (s.strategy_name || '').includes(' + ') ? (
+                        <Link
+                          to={`/dashboard?prospect=${s.id}`}
+                          className="text-indigo-600 hover:text-indigo-800 font-medium"
+                        >
+                          Link accounts in Dashboard
+                        </Link>
                       ) : (
                         <button
                           type="button"
@@ -356,22 +368,22 @@ const ScenariosPage = () => {
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-right">
                       {s.has_result ? (
-                        <span className="inline-flex gap-2 items-center">
+                        <span className="inline-flex flex-wrap gap-x-2 gap-y-1 items-center justify-end">
+                          <Link
+                            to={`/dashboard?prospect=${s.id}`}
+                            className="text-indigo-600 hover:text-indigo-800 font-medium"
+                          >
+                            Edit scenario
+                          </Link>
+                          <span className="text-gray-300 hidden sm:inline">|</span>
                           <button
                             type="button"
                             onClick={() => handleDownloadReportPdf(s.id)}
                             className="text-indigo-600 hover:text-indigo-800 font-medium"
                           >
-                            Download PDF Report
+                            Download PDF
                           </button>
-                          <span className="text-gray-300">|</span>
-                          <Link
-                            to={`/prospect/${s.id}`}
-                            className="text-indigo-600 hover:text-indigo-800 font-medium"
-                          >
-                            View results
-                          </Link>
-                          <span className="text-gray-300">|</span>
+                          <span className="text-gray-300 hidden sm:inline">|</span>
                           <button
                             type="button"
                             onClick={() => handleDelete(s.id, s.name)}
@@ -383,10 +395,10 @@ const ScenariosPage = () => {
                       ) : (
                         <span className="inline-flex gap-2 items-center">
                           <Link
-                            to="/dashboard"
-                            className="text-gray-500 hover:text-gray-700"
+                            to={`/dashboard?prospect=${s.id}`}
+                            className="text-indigo-600 hover:text-indigo-800 font-medium"
                           >
-                            Run in Dashboard
+                            Continue in Dashboard
                           </Link>
                           <span className="text-gray-300">|</span>
                           <button

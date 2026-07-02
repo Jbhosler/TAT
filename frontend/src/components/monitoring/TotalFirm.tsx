@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { monitoringAPI } from '../../services/api';
+import { formatIsoDate } from '../../utils/formatIsoDate';
+import { monitoringAccountPath } from '../../utils/monitoringNav';
 
 type ModelSummary = {
   model_name: string;
@@ -18,7 +20,28 @@ type AccountRow = {
   registration_type: string | null;
 };
 
+type YtdStrategyRow = {
+  strategy_name: string;
+  start_account_count: number;
+  current_account_count: number;
+  account_count_delta: number;
+  start_aum: number;
+  current_aum: number;
+  aum_delta: number;
+  aum_delta_pct: number | null;
+};
+
+type YtdOverview = {
+  has_baseline: boolean;
+  baseline_date: string | null;
+  current_date: string | null;
+  strategies: YtdStrategyRow[];
+  advisers_won: string[];
+  advisers_lost: string[];
+};
+
 type TotalFirmProps = {
+  asOfDate?: string | null;
   refreshTrigger?: string | null;
 };
 
@@ -29,9 +52,11 @@ const SortIcon = ({ dir }: { dir: SortDir }) => {
   return <span className="text-indigo-600 ml-1">{dir === 'asc' ? '↑' : '↓'}</span>;
 };
 
-const TotalFirm = ({ refreshTrigger }: TotalFirmProps) => {
+const TotalFirm = ({ asOfDate, refreshTrigger }: TotalFirmProps) => {
+  const [searchParams] = useSearchParams();
   const [summaryByModel, setSummaryByModel] = useState<ModelSummary[]>([]);
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
+  const [ytdOverview, setYtdOverview] = useState<YtdOverview | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [summarySort, setSummarySort] = useState<{ col: keyof ModelSummary | null; dir: SortDir }>({ col: null, dir: null });
@@ -46,13 +71,23 @@ const TotalFirm = ({ refreshTrigger }: TotalFirmProps) => {
   const load = async () => {
     setLoading(true);
     try {
-      const res = await monitoringAPI.totalFirm();
+      const params = asOfDate ? { as_of_date: asOfDate } : {};
+      const [res, ytdRes] = await Promise.all([
+        monitoringAPI.totalFirm({
+          ...params,
+          limit: 1000,
+          offset: 0,
+        }),
+        monitoringAPI.totalFirmYtd(params),
+      ]);
       setSummaryByModel(res.data.summary_by_model ?? []);
       setAccounts(res.data.accounts ?? []);
+      setYtdOverview(ytdRes.data ?? null);
     } catch (err) {
       console.error('Failed to load Total Firm data:', err);
       setSummaryByModel([]);
       setAccounts([]);
+      setYtdOverview(null);
     } finally {
       setLoading(false);
     }
@@ -60,18 +95,40 @@ const TotalFirm = ({ refreshTrigger }: TotalFirmProps) => {
 
   useEffect(() => {
     load();
-  }, [refreshTrigger ?? '']);
+  }, [asOfDate ?? '', refreshTrigger ?? '']);
 
   const formatDollars = (v: number) => {
     const n = Number(v);
     if (Number.isNaN(n)) return '0';
     return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
   };
-
+  const formatSignedNumber = (v: number) => `${v >= 0 ? '+' : ''}${v}`;
+  const formatSignedDollars = (v: number) => `${v >= 0 ? '+' : '-'}$${formatDollars(Math.abs(v))}`;
+  const formatSignedPct = (v: number | null) => (v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`);
   const totalValueAllStrategies = summaryByModel.reduce(
     (sum, row) => sum + (Number(row.total_value) || 0),
     0
   );
+  const ytdAccountDelta = (ytdOverview?.strategies ?? []).reduce(
+    (sum, row) => sum + (Number(row.account_count_delta) || 0),
+    0
+  );
+  const ytdAumDelta = (ytdOverview?.strategies ?? []).reduce(
+    (sum, row) => sum + (Number(row.aum_delta) || 0),
+    0
+  );
+  const ytdStartAum = (ytdOverview?.strategies ?? []).reduce(
+    (sum, row) => sum + (Number(row.start_aum) || 0),
+    0
+  );
+  const ytdAumDeltaPct = ytdStartAum > 0 ? (ytdAumDelta / ytdStartAum) * 100 : null;
+
+  const accountReturnParams = useMemo(() => {
+    const params = new URLSearchParams(searchParams);
+    params.set('tab', 'totalfirm');
+    if (asOfDate) params.set('as_of_date', asOfDate);
+    return params;
+  }, [searchParams, asOfDate]);
 
   const handleSummarySort = (col: keyof ModelSummary) => {
     setSummarySort((prev) => {
@@ -162,6 +219,98 @@ const TotalFirm = ({ refreshTrigger }: TotalFirmProps) => {
         <p className="text-sm text-gray-500">Loading…</p>
       ) : (
         <>
+          {/* YTD Firm Overview */}
+          {ytdOverview && (
+            <div className="mb-6 rounded-lg border border-indigo-100 bg-indigo-50/40 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-900">YTD Firm Overview</h4>
+                  <p className="text-xs text-gray-600 mt-1">
+                    Comparing {formatIsoDate(ytdOverview.baseline_date)} to {formatIsoDate(ytdOverview.current_date)}.
+                    Uses the earliest retained snapshot in the selected year as the YTD baseline.
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                  <div className="rounded-md bg-white px-3 py-2 border border-gray-200">
+                    <p className="text-xs text-gray-500 uppercase">Accounts</p>
+                    <p className={`font-semibold ${ytdAccountDelta >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                      {formatSignedNumber(ytdAccountDelta)}
+                    </p>
+                  </div>
+                  <div className="rounded-md bg-white px-3 py-2 border border-gray-200">
+                    <p className="text-xs text-gray-500 uppercase">AUM</p>
+                    <p className={`font-semibold ${ytdAumDelta >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                      {formatSignedDollars(ytdAumDelta)}
+                    </p>
+                    <p className="text-xs text-gray-500">{formatSignedPct(ytdAumDeltaPct)}</p>
+                  </div>
+                  <div className="rounded-md bg-white px-3 py-2 border border-gray-200">
+                    <p className="text-xs text-gray-500 uppercase">Advisers Won</p>
+                    <p className="font-semibold text-green-700">{ytdOverview.advisers_won.length}</p>
+                  </div>
+                  <div className="rounded-md bg-white px-3 py-2 border border-gray-200">
+                    <p className="text-xs text-gray-500 uppercase">Advisers Lost</p>
+                    <p className="font-semibold text-red-700">{ytdOverview.advisers_lost.length}</p>
+                  </div>
+                </div>
+              </div>
+
+              {ytdOverview.strategies.length > 0 && (
+                <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Strategy</th>
+                        <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Accounts</th>
+                        <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Account Change</th>
+                        <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Current AUM</th>
+                        <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">AUM Change</th>
+                        <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">AUM Change %</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {ytdOverview.strategies.map((row) => (
+                        <tr key={row.strategy_name}>
+                          <td className="px-4 py-2 text-sm font-medium text-gray-900">{row.strategy_name}</td>
+                          <td className="px-4 py-2 text-sm text-right text-gray-700">
+                            {row.start_account_count} → {row.current_account_count}
+                          </td>
+                          <td className={`px-4 py-2 text-sm text-right font-medium ${row.account_count_delta >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                            {formatSignedNumber(row.account_count_delta)}
+                          </td>
+                          <td className="px-4 py-2 text-sm text-right text-gray-900">${formatDollars(row.current_aum)}</td>
+                          <td className={`px-4 py-2 text-sm text-right font-medium ${row.aum_delta >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                            {formatSignedDollars(row.aum_delta)}
+                          </td>
+                          <td className={`px-4 py-2 text-sm text-right font-medium ${(row.aum_delta_pct ?? 0) >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                            {formatSignedPct(row.aum_delta_pct)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {(ytdOverview.advisers_won.length > 0 || ytdOverview.advisers_lost.length > 0) && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+                  <div>
+                    <p className="text-xs font-medium text-green-700 uppercase mb-1">Advisers Won</p>
+                    <p className="text-sm text-gray-700">
+                      {ytdOverview.advisers_won.length ? ytdOverview.advisers_won.join(', ') : '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-red-700 uppercase mb-1">Advisers Lost</p>
+                    <p className="text-sm text-gray-700">
+                      {ytdOverview.advisers_lost.length ? ytdOverview.advisers_lost.join(', ') : '—'}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Summary by Model */}
           <div className="mb-6">
             <div className="flex items-center gap-4 mb-3">
@@ -336,7 +485,7 @@ const TotalFirm = ({ refreshTrigger }: TotalFirmProps) => {
                     </td>
                     <td className="px-4 py-2 text-sm text-right">
                       <Link
-                        to={`/monitoring/account/${row.id}`}
+                        to={monitoringAccountPath(row.id, accountReturnParams)}
                         className="text-indigo-600 hover:text-indigo-800 font-medium"
                       >
                         View account

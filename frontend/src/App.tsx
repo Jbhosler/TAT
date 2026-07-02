@@ -6,17 +6,40 @@ import AdminPanel from './components/admin/AdminPanel';
 import ScenariosPage from './components/ScenariosPage';
 import ProspectResultPage from './components/ProspectResultPage';
 import MonitoringPage from './components/MonitoringPage';
+import AcceptTokenPage from './components/auth/AcceptTokenPage';
+
+const parseJwtPayload = (token: string): any | null => {
+  try {
+    const base64Url = token.split('.')[1];
+    if (!base64Url) return null;
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(base64.length + (4 - (base64.length % 4 || 4)) % 4, '=');
+    const json = atob(padded);
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+};
+
+const hasValidToken = (): boolean => {
+  const token = localStorage.getItem('auth_token');
+  if (!token) return false;
+  if (token === 'authenticated') return true;
+  const payload = parseJwtPayload(token);
+  if (!payload || typeof payload.exp !== 'number') {
+    return false;
+  }
+  return payload.exp * 1000 > Date.now();
+};
 
 function App() {
   // Use state to track auth so React re-renders when it changes
-  const [isAuth, setIsAuth] = useState(() => {
-    return localStorage.getItem('auth_token') !== null;
-  });
+  const [isAuth, setIsAuth] = useState(() => hasValidToken());
 
   useEffect(() => {
     // Listen for custom auth event (dispatched when token is saved)
     const handleAuthChange = () => {
-      setIsAuth(localStorage.getItem('auth_token') !== null);
+      setIsAuth(hasValidToken());
     };
     
     // Listen for custom event
@@ -24,12 +47,12 @@ function App() {
     
     // Also listen for hash changes (when navigating)
     const handleHashChange = () => {
-      setIsAuth(localStorage.getItem('auth_token') !== null);
+      setIsAuth(hasValidToken());
     };
     window.addEventListener('hashchange', handleHashChange);
     
     // Check auth on mount
-    setIsAuth(localStorage.getItem('auth_token') !== null);
+    setIsAuth(hasValidToken());
     
     return () => {
       window.removeEventListener('auth-changed', handleAuthChange);
@@ -56,6 +79,7 @@ function App() {
             isAuthenticated() ? <Dashboard /> : <Navigate to="/" replace />
           }
         />
+        <Route path="/auth/accept" element={<AcceptTokenPage />} />
         <Route
           path="/admin"
           element={

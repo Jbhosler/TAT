@@ -1,31 +1,48 @@
-import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useEffect, useCallback } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import TaxSummary from './TaxSummary';
 import ProspectUpload from './prospect/ProspectUpload';
+import ClassifyHoldingsPanel from './prospect/ClassifyHoldingsPanel';
 import MappingWizard from './prospect/MappingWizard';
+import FlowStepNav, { type FlowStep } from './prospect/FlowStepNav';
+import StrategyAccountLinks from './prospect/StrategyAccountLinks';
+import StrategyBlendSelector, {
+  isStrategySelectionReady,
+  selectionFromProspect,
+  selectionsEqual,
+  strategyIdsFromSelection,
+  targetPayloadFromSelection,
+  type StrategySelection,
+} from './prospect/StrategyBlendSelector';
 import { prospectsAPI, strategiesAPI } from '../services/api';
 
-type Step = 'upload' | 'classify' | 'map' | 'calculate' | 'result';
-
 const Dashboard = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [strategies, setStrategies] = useState<any[]>([]);
-  const [selectedStrategyId, setSelectedStrategyId] = useState('');
-  const [step, setStep] = useState<Step>('upload');
+  const [strategySelection, setStrategySelection] = useState<StrategySelection>({
+    mode: 'single',
+    strategyId: '',
+  });
+  const [savedStrategySelection, setSavedStrategySelection] = useState<StrategySelection>({
+    mode: 'single',
+    strategyId: '',
+  });
+  const [step, setStep] = useState<FlowStep>('upload');
   const [prospectId, setProspectId] = useState<string | null>(null);
-  const [classificationResult, setClassificationResult] = useState<any>(null);
-  const [unmappedHoldings, setUnmappedHoldings] = useState<any[]>([]);
+  const [prospectName, setProspectName] = useState('');
+  const [mappingHoldings, setMappingHoldings] = useState<any[]>([]);
   const [transitionResult, setTransitionResult] = useState<any>(null);
   const [staleWarning, setStaleWarning] = useState(false);
+  const [resultOutdated, setResultOutdated] = useState(false);
+  const [targetSaving, setTargetSaving] = useState(false);
+  const [targetSaveMessage, setTargetSaveMessage] = useState<string | null>(null);
+  const [loadingProspect, setLoadingProspect] = useState(false);
+  const [hasStoredResult, setHasStoredResult] = useState(false);
 
-  useEffect(() => {
-    loadStrategies();
-  }, []);
-
-  useEffect(() => {
-    if (prospectId && step === 'result') {
-      checkStaleData(prospectId);
-    }
-  }, [prospectId, step]);
+  const targetDirty =
+    prospectId != null &&
+    isStrategySelectionReady(strategySelection) &&
+    !selectionsEqual(strategySelection, savedStrategySelection);
 
   const loadStrategies = async () => {
     try {
@@ -33,6 +50,89 @@ const Dashboard = () => {
       setStrategies(response.data);
     } catch (err) {
       console.error('Failed to load strategies:', err);
+    }
+  };
+
+  const loadProspect = useCallback(async (id: string, preferredStep?: FlowStep) => {
+    setLoadingProspect(true);
+    try {
+      const prospectRes = await prospectsAPI.get(id);
+      const prospect = prospectRes.data;
+      const selection = selectionFromProspect(prospect);
+      setProspectId(id);
+      setProspectName(prospect.name || '');
+      setStrategySelection(selection);
+      setSavedStrategySelection(selection);
+
+      let nextStep: FlowStep = preferredStep || 'upload';
+      let resultData: any = null;
+      try {
+        const resultRes = await prospectsAPI.getResult(id);
+        resultData = resultRes.data;
+      } catch {
+        resultData = null;
+      }
+
+      if (!preferredStep) {
+        if (resultData) {
+          nextStep = 'result';
+        } else {
+          const reviewRes = await prospectsAPI.getMappingReview(id);
+          const reviewHoldings = reviewRes.data || [];
+          const unmappedRes = await prospectsAPI.getUnmapped(id);
+          const unmapped = unmappedRes.data || [];
+          setMappingHoldings(reviewHoldings);
+          if (unmapped.length > 0 || reviewHoldings.length > 0) {
+            nextStep = 'map';
+          } else {
+            const classified = (prospect.holdings || []).some((h: any) => h.is_side_pocket);
+            nextStep = classified ? 'calculate' : 'classify';
+          }
+        }
+      }
+
+      setTransitionResult(resultData);
+      setHasStoredResult(Boolean(resultData));
+      setResultOutdated(false);
+      setStep(nextStep);
+
+      if (nextStep === 'map') {
+        const reviewRes = await prospectsAPI.getMappingReview(id);
+        setMappingHoldings(reviewRes.data || []);
+      }
+
+      if (nextStep === 'result') {
+        checkStaleData(id);
+      }
+    } catch (err) {
+      console.error('Failed to load prospect:', err);
+    } finally {
+      setLoadingProspect(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadStrategies();
+  }, []);
+
+  useEffect(() => {
+    const id = searchParams.get('prospect');
+    if (id && id !== prospectId) {
+      loadProspect(id);
+    }
+  }, [searchParams, prospectId, loadProspect]);
+
+  useEffect(() => {
+    if (prospectId && step === 'result') {
+      checkStaleData(prospectId);
+    }
+  }, [prospectId, step]);
+
+  const syncProspectQuery = (id: string | null) => {
+    if (id) {
+      setSearchParams({ prospect: id }, { replace: true });
+    } else {
+      setSearchParams({}, { replace: true });
     }
   };
 
@@ -45,25 +145,121 @@ const Dashboard = () => {
     }
   };
 
+  const markResultOutdated = () => {
+    setTransitionResult(null);
+    setHasStoredResult(false);
+    setResultOutdated(true);
+    setStaleWarning(false);
+  };
+
+  const refreshMappingHoldings = async (id: string) => {
+    const reviewRes = await prospectsAPI.getMappingReview(id);
+    setMappingHoldings(reviewRes.data || []);
+    return reviewRes.data || [];
+  };
+
+  const refreshMappingNeeds = async (id: string) => {
+    const [reviewRes, unmappedRes] = await Promise.all([
+      prospectsAPI.getMappingReview(id),
+      prospectsAPI.getUnmapped(id),
+    ]);
+    const reviewHoldings = reviewRes.data || [];
+    const unmappedHoldings = unmappedRes.data || [];
+    setMappingHoldings(unmappedHoldings.length > 0 ? unmappedHoldings : reviewHoldings);
+    return { reviewHoldings, unmappedHoldings };
+  };
+
+  const handleSaveTarget = async () => {
+    if (!prospectId || !isStrategySelectionReady(strategySelection)) return;
+    setTargetSaving(true);
+    setTargetSaveMessage(null);
+    try {
+      const payload = targetPayloadFromSelection(strategySelection);
+      await prospectsAPI.updateTarget(prospectId, payload);
+      setSavedStrategySelection(strategySelection);
+      markResultOutdated();
+      const { reviewHoldings, unmappedHoldings } = await refreshMappingNeeds(prospectId);
+      if (unmappedHoldings.length > 0) {
+        setStep('map');
+        setTargetSaveMessage('Target portfolio saved. Review newly unmapped holdings before recalculating.');
+      } else {
+        setStep('calculate');
+        setTargetSaveMessage(
+          reviewHoldings.length > 0
+            ? 'Target portfolio saved. Existing mappings were preserved; recalculate when ready.'
+            : 'Target portfolio saved. Recalculate when ready.'
+        );
+      }
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Failed to save target portfolio');
+    } finally {
+      setTargetSaving(false);
+    }
+  };
+
+  const confirmUnsavedTarget = (): boolean => {
+    if (!targetDirty) return true;
+    return window.confirm(
+      'Target portfolio has unsaved changes. Continue without saving? Your calculation will still use the last saved target.'
+    );
+  };
+
+  const goToStep = async (next: FlowStep) => {
+    if (!prospectId) {
+      if (next === 'upload') setStep('upload');
+      return;
+    }
+
+    if (!confirmUnsavedTarget()) return;
+
+    if (next === 'map') {
+      await refreshMappingHoldings(prospectId);
+    }
+
+    if (next === 'result') {
+      try {
+        const resultRes = await prospectsAPI.getResult(prospectId);
+        setTransitionResult(resultRes.data);
+        setHasStoredResult(true);
+        setResultOutdated(false);
+        checkStaleData(prospectId);
+      } catch {
+        alert('No calculation yet. Run Calculate first.');
+        return;
+      }
+    }
+
+    setStep(next);
+  };
+
   const handleUploadComplete = (newProspectId: string) => {
     setProspectId(newProspectId);
+    syncProspectQuery(newProspectId);
     setStep('classify');
+    setResultOutdated(false);
+  };
+
+  const handleHoldingsSaved = () => {
+    markResultOutdated();
+    setTargetSaveMessage('Holdings saved. Earlier steps may need review before recalculating.');
   };
 
   const handleClassifyComplete = async () => {
     if (!prospectId) return;
     try {
-      const result = await prospectsAPI.classify(prospectId);
-      setClassificationResult(result.data);
+      markResultOutdated();
+      const holdings = await refreshMappingHoldings(prospectId);
       const unmapped = await prospectsAPI.getUnmapped(prospectId);
       if (unmapped.data && unmapped.data.length > 0) {
-        setUnmappedHoldings(unmapped.data);
+        setMappingHoldings(unmapped.data);
+        setStep('map');
+      } else if (holdings.length > 0) {
         setStep('map');
       } else {
         setStep('calculate');
       }
     } catch (err) {
-      console.error('Failed to classify holdings:', err);
+      console.error('Failed to load mapping holdings:', err);
     }
   };
 
@@ -71,22 +267,18 @@ const Dashboard = () => {
     setStep('calculate');
   };
 
-  const handleBackToMapping = async () => {
-    if (!prospectId) return;
-    try {
-      const unmapped = await prospectsAPI.getUnmapped(prospectId);
-      setUnmappedHoldings(unmapped.data ?? []);
-      setStep('map');
-    } catch {
-      setStep('map');
-    }
-  };
-
   const handleCalculate = async () => {
     if (!prospectId) return;
+    if (targetDirty) {
+      alert('Save target portfolio changes before calculating.');
+      return;
+    }
     try {
       const result = await prospectsAPI.calculate(prospectId);
       setTransitionResult(result.data);
+      setHasStoredResult(true);
+      setResultOutdated(false);
+      setStaleWarning(false);
       setStep('result');
     } catch (err: any) {
       alert(err.response?.data?.detail || 'Failed to calculate transition');
@@ -96,7 +288,14 @@ const Dashboard = () => {
   const handleDownloadReportPdf = async () => {
     if (!prospectId) return;
     try {
-      const res = await prospectsAPI.getReportPdf(prospectId);
+      const additionalText = window.prompt(
+        'Optional: Add narrative text for the PDF (you can paste multiple paragraphs). Leave blank for none.',
+        ''
+      );
+      const res = await prospectsAPI.getReportPdf(
+        prospectId,
+        additionalText != null && additionalText.trim() ? additionalText.trim() : undefined
+      );
       const blob = new Blob([res.data], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -115,11 +314,17 @@ const Dashboard = () => {
 
   const handleStartNewProspect = () => {
     setProspectId(null);
+    setProspectName('');
     setStep('upload');
-    setClassificationResult(null);
-    setUnmappedHoldings([]);
+    setMappingHoldings([]);
     setTransitionResult(null);
+    setHasStoredResult(false);
     setStaleWarning(false);
+    setResultOutdated(false);
+    setTargetSaveMessage(null);
+    setStrategySelection({ mode: 'single', strategyId: '' });
+    setSavedStrategySelection({ mode: 'single', strategyId: '' });
+    syncProspectQuery(null);
   };
 
   const handleLogout = () => {
@@ -178,13 +383,26 @@ const Dashboard = () => {
       </nav>
 
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-        {staleWarning && step === 'result' && (
+        {loadingProspect && (
+          <div className="mb-4 text-sm text-gray-600">Loading scenario…</div>
+        )}
+
+        {(staleWarning || resultOutdated) && (
           <div className="mb-4 bg-yellow-50 border-l-4 border-yellow-400 p-4">
             <div className="flex">
               <div className="ml-3">
                 <p className="text-sm text-yellow-700">
-                  <strong>Warning:</strong> The strategy has been updated since this calculation.
-                  Please recalculate to get updated results.
+                  {resultOutdated ? (
+                    <>
+                      <strong>Results outdated:</strong> Holdings, classification, mappings, or target
+                      portfolio changed. Recalculate to refresh sell/buy recommendations.
+                    </>
+                  ) : (
+                    <>
+                      <strong>Warning:</strong> The target strategy or blend has been updated since this calculation.
+                      Please recalculate to get updated results.
+                    </>
+                  )}
                 </p>
               </div>
             </div>
@@ -192,40 +410,46 @@ const Dashboard = () => {
         )}
 
         <div className="px-4 py-6 sm:px-0">
-          {/* Intro */}
           <p className="mb-6 text-gray-600">
-            Select the <strong>target strategy</strong> to compare against, then enter the prospect&apos;s current holdings.
-            The tool will calculate the tax-aware transition.
+            Select a <strong>target strategy</strong> or <strong>weighted blend</strong> to compare against,
+            then enter the prospect&apos;s current holdings. You can return to any step to edit before recalculating.
           </p>
 
-          {/* 1. Strategy to compare against - always visible */}
           <div className="mb-6 bg-white shadow rounded-lg p-6">
             <h2 className="text-lg font-semibold text-gray-900 mb-2">
-              1. Select strategy to compare against
+              1. Select strategy or blend to compare against
             </h2>
             <p className="text-sm text-gray-500 mb-4">
-              This is the target strategy the prospect portfolio will be transitioned to.
+              Choose one strategy or blend several with weights. Save changes here when editing an existing scenario.
             </p>
-            <div className="flex flex-wrap items-center gap-4">
-              <div className="min-w-[280px]">
-                <select
-                  className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                  value={selectedStrategyId}
-                  onChange={(e) => setSelectedStrategyId(e.target.value)}
-                >
-                  <option value="">Select a strategy...</option>
-                  {strategies.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <div className="space-y-4">
+              <StrategyBlendSelector
+                strategies={strategies}
+                selection={strategySelection}
+                onChange={setStrategySelection}
+              />
               {strategies.length === 0 && (
                 <p className="text-sm text-amber-600">
                   No strategies yet. Create one in <Link to="/admin" className="underline">Admin</Link> first.
                 </p>
               )}
+              <div className="flex flex-wrap items-center gap-3">
+                {prospectId && isStrategySelectionReady(strategySelection) && (
+                  <button
+                    type="button"
+                    onClick={handleSaveTarget}
+                    disabled={targetSaving || !targetDirty}
+                    className="py-2 px-4 border border-transparent rounded-md text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    {targetSaving ? 'Saving…' : 'Save target portfolio'}
+                  </button>
+                )}
+                {prospectId && targetDirty && (
+                  <span className="text-sm text-amber-700">Unsaved target changes</span>
+                )}
+                {targetSaveMessage && (
+                  <span className="text-sm text-green-700">{targetSaveMessage}</span>
+                )}
               {prospectId && (
                 <button
                   type="button"
@@ -236,115 +460,95 @@ const Dashboard = () => {
                 </button>
               )}
             </div>
+            {prospectId && (
+              <StrategyAccountLinks prospectId={prospectId} />
+            )}
+          </div>
           </div>
 
-          {/* Progress steps when in flow */}
           {prospectId && (
             <div className="mb-6">
-              <nav aria-label="Progress">
-                <ol className="flex flex-wrap items-center gap-2 text-sm">
-                  <li className={step === 'upload' ? 'text-indigo-600 font-medium' : 'text-gray-500'}>
-                    1. Upload
-                  </li>
-                  <li className="text-gray-400">→</li>
-                  <li className={step === 'classify' ? 'text-indigo-600 font-medium' : 'text-gray-500'}>
-                    2. Classify
-                  </li>
-                  <li className="text-gray-400">→</li>
-                  <li className={step === 'map' ? 'text-indigo-600 font-medium' : 'text-gray-500'}>
-                    3. Map
-                  </li>
-                  <li className="text-gray-400">→</li>
-                  <li className={step === 'calculate' ? 'text-indigo-600 font-medium' : 'text-gray-500'}>
-                    4. Calculate
-                  </li>
-                  <li className="text-gray-400">→</li>
-                  <li className={step === 'result' ? 'text-indigo-600 font-medium' : 'text-gray-500'}>
-                    5. Result
-                  </li>
-                </ol>
-              </nav>
+              <FlowStepNav
+                currentStep={step}
+                onStepClick={goToStep}
+                canNavigate={Boolean(prospectId)}
+                hasResult={hasStoredResult && Boolean(transitionResult)}
+              />
+              {prospectName && (
+                <p className="mt-2 text-sm text-gray-500">
+                  Scenario: <span className="font-medium text-gray-800">{prospectName}</span>
+                </p>
+              )}
             </div>
           )}
 
-          {/* Step content: 2. Prospect portfolio (holdings input) */}
           {step === 'upload' && (
             <div className="bg-white shadow rounded-lg p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-2">
                 2. Prospect portfolio — enter holdings
               </h2>
               <p className="text-sm text-gray-500 mb-4">
-                Enter the prospect&apos;s current holdings manually or upload a CSV. Then create the prospect to run classification and transition.
+                {prospectId
+                  ? 'Edit holdings below and save. You can change tickers, values, and gain/loss at any time.'
+                  : 'Enter the prospect\'s current holdings manually or upload a CSV. Then create the prospect to run classification and transition.'}
               </p>
-              {!selectedStrategyId && strategies.length > 0 && (
+              {!prospectId && !isStrategySelectionReady(strategySelection) && strategies.length > 0 && (
                 <p className="mb-4 text-sm text-amber-700 bg-amber-50 p-3 rounded-md">
-                  Select a strategy above (step 1) to compare against, then enter holdings below.
+                  Select a strategy or valid blend above (step 1), then enter holdings below.
                 </p>
               )}
               <ProspectUpload
                 strategies={strategies}
-                selectedStrategyId={selectedStrategyId}
-                onStrategyChange={setSelectedStrategyId}
+                strategySelection={strategySelection}
+                onStrategySelectionChange={setStrategySelection}
                 onUploadComplete={handleUploadComplete}
+                prospectId={prospectId}
+                onHoldingsSaved={handleHoldingsSaved}
                 hideStrategySelector
               />
             </div>
           )}
 
-          {step === 'classify' && (
+          {step === 'classify' && prospectId && (
             <div className="bg-white shadow rounded-lg p-6">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">
-                Classify Holdings
+              <h2 className="text-lg font-semibold text-gray-900 mb-2">
+                Classify holdings
               </h2>
-              {classificationResult ? (
-                <div className="space-y-4">
-                  <p className="text-gray-700">
-                    Side-pocket holdings: {classificationResult.side_pocket_count}
-                  </p>
-                  <p className="text-gray-700">
-                    Rebalanceable holdings: {classificationResult.rebalanceable_count}
-                  </p>
-                </div>
-              ) : (
-                <button
-                  onClick={handleClassifyComplete}
-                  className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
-                >
-                  Classify Holdings
-                </button>
-              )}
+              <p className="text-sm text-gray-500 mb-4">
+                Choose side-pocket positions, then continue to map the rest.
+              </p>
+              <ClassifyHoldingsPanel
+                prospectId={prospectId}
+                onComplete={handleClassifyComplete}
+              />
             </div>
           )}
 
-          {step === 'map' && prospectId && unmappedHoldings.length > 0 && (
-            <MappingWizard
-              prospectId={prospectId}
-              unmappedHoldings={unmappedHoldings}
-              onMappingComplete={handleMappingComplete}
-            />
+          {step === 'map' && prospectId && mappingHoldings.length > 0 && (
+            <div className="space-y-4">
+              <MappingWizard
+                prospectId={prospectId}
+                unmappedHoldings={mappingHoldings}
+                strategyIds={strategyIdsFromSelection(savedStrategySelection)}
+                onMappingComplete={handleMappingComplete}
+                onDataChanged={markResultOutdated}
+              />
+            </div>
           )}
-          {step === 'map' && prospectId && unmappedHoldings.length === 0 && (
+          {step === 'map' && prospectId && mappingHoldings.length === 0 && (
             <div className="bg-white shadow rounded-lg p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">
                 Mapping
               </h2>
               <p className="text-gray-700 mb-4">
-                All holdings are mapped. You can proceed to calculate or re-run Classify to change how holdings are classified.
+                No rebalanceable holdings to map (all may be side pocket). Proceed to calculate or revisit classify.
               </p>
-              <div className="flex flex-col sm:flex-row gap-3">
-                <button
-                  onClick={() => setStep('calculate')}
-                  className="flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
-                >
-                  Proceed to Calculate
-                </button>
-                <button
-                  onClick={handleBackToMapping}
-                  className="flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
-                >
-                  Refresh mapping status
-                </button>
-              </div>
+              <button
+                onClick={() => setStep('calculate')}
+                className="flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
+              >
+                Proceed to Calculate
+              </button>
             </div>
           )}
 
@@ -354,68 +558,78 @@ const Dashboard = () => {
                 Calculate Transition
               </h2>
               <p className="text-gray-700 mb-4">
-                All holdings have been mapped. Ready to calculate the transition.
+                Ready to calculate the transition against the current holdings and target portfolio.
               </p>
-              <div className="flex flex-col sm:flex-row gap-3">
+              {targetDirty && (
+                <p className="mb-4 text-sm text-amber-700 bg-amber-50 p-3 rounded-md">
+                  Save target portfolio changes in step 1 before calculating.
+                </p>
+              )}
+              <button
+                onClick={handleCalculate}
+                disabled={targetDirty}
+                className="flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
+              >
+                Calculate Transition
+              </button>
+            </div>
+          )}
+
+          {step === 'result' && prospectId && !transitionResult && resultOutdated && (
+            <div className="bg-white shadow rounded-lg p-6">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">
+                Results Need Recalculation
+              </h2>
+              <p className="text-gray-700 mb-4">
+                The target portfolio, holdings, classification, or mappings changed after the last proposal.
+                Continue directly to calculate unless you want to review earlier steps first.
+              </p>
+              <div className="flex flex-wrap gap-3">
                 <button
-                  onClick={handleCalculate}
-                  className="flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
+                  type="button"
+                  onClick={() => setStep('calculate')}
+                  className="py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
                 >
-                  Calculate Transition
+                  Go to Calculate
                 </button>
                 <button
-                  onClick={handleBackToMapping}
-                  className="flex justify-center py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                  type="button"
+                  onClick={async () => {
+                    const { unmappedHoldings } = await refreshMappingNeeds(prospectId);
+                    setStep(unmappedHoldings.length > 0 ? 'map' : 'calculate');
+                  }}
+                  className="py-2 px-4 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
                 >
-                  Back to mapping
+                  Check mapping needs
                 </button>
               </div>
             </div>
           )}
 
-          {step === 'result' && transitionResult && (
+          {step === 'result' && transitionResult && prospectId && (
             <div className="space-y-6">
               <div className="bg-white shadow rounded-lg p-6">
                 <h2 className="text-lg font-semibold text-gray-900 mb-4">
-                  Transition Result
+                  Transition Result Actions
                 </h2>
                 <div className="space-y-4">
-                  <div>
-                    <p className="text-sm font-medium text-gray-700">
-                      Total Realized Gain/Loss
-                    </p>
-                    <p
-                      className={`text-lg font-bold ${
-                        Number(transitionResult.total_realized_gain_loss) >= 0
-                          ? 'text-red-600'
-                          : 'text-green-600'
-                      }`}
-                    >
-                      $
-                      {Number(transitionResult.total_realized_gain_loss).toLocaleString(
-                        'en-US',
-                        { minimumFractionDigits: 0, maximumFractionDigits: 0 }
-                      )}
-                    </p>
-                  </div>
+                  <p className="text-sm text-gray-600">
+                    Review the adviser summary below, then download the client-ready PDF. Use the step
+                    links above to edit holdings, classification, mappings, or target portfolio, then recalculate.
+                  </p>
                   <div className="flex flex-wrap gap-3">
                     <button
                       onClick={handleDownloadReportPdf}
-                      className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                      className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700"
                     >
                       Download PDF Report
                     </button>
                     <button
                       onClick={handleCalculate}
-                      className="text-sm text-indigo-600 hover:text-indigo-800"
+                      disabled={targetDirty}
+                      className="text-sm text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
                     >
                       Recalculate
-                    </button>
-                    <button
-                      onClick={handleBackToMapping}
-                      className="text-sm text-gray-600 hover:text-gray-800"
-                    >
-                      Back to mapping
                     </button>
                   </div>
                 </div>

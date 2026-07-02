@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { monitoringAPI, prospectsAPI } from '../../services/api';
+import { formatIsoDate } from '../../utils/formatIsoDate';
+import HoldingsComparisonModal from './HoldingsComparisonModal';
 
 type SnapshotWithBreakdown = {
   snapshot: {
@@ -25,8 +27,15 @@ type SnapshotWithBreakdown = {
   }>;
 };
 
-const AccountDrillDown = () => {
+type AccountDrillDownProps = {
+  backPath?: string;
+  availableDates?: string[];
+};
+
+const AccountDrillDown = ({ backPath = '/monitoring', availableDates = [] }: AccountDrillDownProps) => {
   const { id } = useParams<{ id: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedAsOfDate = searchParams.get('as_of_date') || null;
   const [account, setAccount] = useState<{
     id: string;
     synthetic_id: string;
@@ -45,6 +54,9 @@ const AccountDrillDown = () => {
   const [savingName, setSavingName] = useState(false);
   const [savingRegistrationType, setSavingRegistrationType] = useState(false);
   const [linkedProspects, setLinkedProspects] = useState<Array<{ id: string; name: string; has_document: boolean }>>([]);
+  const [comparisonPriorDate, setComparisonPriorDate] = useState<string | null>(null);
+  const [comparisonCurrentDate, setComparisonCurrentDate] = useState<string | null>(null);
+  const [showComparison, setShowComparison] = useState(false);
 
   const loadAccount = async () => {
     if (!id) return;
@@ -62,7 +74,10 @@ const AccountDrillDown = () => {
   const loadSnapshots = async () => {
     if (!id) return;
     try {
-      const res = await monitoringAPI.getAccountSnapshots(id);
+      const res = await monitoringAPI.getAccountSnapshots(
+        id,
+        selectedAsOfDate ? { as_of_date: selectedAsOfDate } : undefined
+      );
       setSnapshots(res.data);
     } catch (err) {
       console.error('Failed to load snapshots:', err);
@@ -87,7 +102,7 @@ const AccountDrillDown = () => {
     }
     setLoading(true);
     Promise.all([loadAccount(), loadSnapshots(), loadLinkedProspects()]).finally(() => setLoading(false));
-  }, [id]);
+  }, [id, selectedAsOfDate]);
 
   const handleSaveFriendlyName = async () => {
     if (!id) return;
@@ -121,12 +136,20 @@ const AccountDrillDown = () => {
   const formatDollars = (v: number) =>
     Number(v).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
   const formatPct = (v: number) => `${Number(v).toFixed(2)}%`;
+  const updateAsOfDate = (value: string | null) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (value) next.set('as_of_date', value);
+      else next.delete('as_of_date');
+      return next;
+    }, { replace: true });
+  };
 
   if (!id) {
     return (
       <div className="bg-white shadow rounded-lg p-6">
         <p className="text-gray-500">No account selected.</p>
-        <Link to="/monitoring" className="text-indigo-600 hover:text-indigo-800 mt-2 inline-block">Back to Monitoring</Link>
+        <Link to={backPath} className="text-indigo-600 hover:text-indigo-800 mt-2 inline-block">Back to Monitoring</Link>
       </div>
     );
   }
@@ -140,17 +163,67 @@ const AccountDrillDown = () => {
   }
 
   const snap = snapshots[0];
+  const comparisonDates = availableDates.length > 0
+    ? availableDates
+    : snapshots.map((s) => s.snapshot.as_of_date);
+  const selectedComparisonIndex = selectedAsOfDate
+    ? comparisonDates.findIndex((d) => d === selectedAsOfDate)
+    : -1;
+  const olderThanSelected = selectedComparisonIndex >= 0
+    ? comparisonDates[selectedComparisonIndex + 1] || null
+    : null;
+  const newerThanSelected = selectedComparisonIndex > 0
+    ? comparisonDates[selectedComparisonIndex - 1] || null
+    : null;
+  const defaultPriorDate = selectedAsOfDate
+    ? (olderThanSelected || selectedAsOfDate)
+    : comparisonDates[1] || null;
+  const defaultCurrentDate = selectedAsOfDate
+    ? (olderThanSelected ? selectedAsOfDate : newerThanSelected || selectedAsOfDate)
+    : comparisonDates[0] || null;
+  const priorDateForComparison = comparisonPriorDate || defaultPriorDate || null;
+  const currentDateForComparison = comparisonCurrentDate || defaultCurrentDate || null;
+  const orderedComparisonDates = [priorDateForComparison, currentDateForComparison]
+    .filter((d): d is string => Boolean(d))
+    .sort();
+  const normalizedPriorDate = orderedComparisonDates[0] || null;
+  const normalizedCurrentDate = orderedComparisonDates[1] || null;
+  const canCompareHoldings =
+    Boolean(id && normalizedPriorDate && normalizedCurrentDate && normalizedPriorDate !== normalizedCurrentDate);
+  const accountLabel = [
+    account.advisor,
+    account.account_display,
+    account.friendly_name || account.synthetic_id.slice(0, 8) + '…',
+  ].filter(Boolean).join(' — ');
 
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <Link to="/monitoring" className="text-sm text-indigo-600 hover:text-indigo-800">← Back to Monitoring</Link>
+        <Link to={backPath} className="text-sm text-indigo-600 hover:text-indigo-800">← Back to Monitoring</Link>
       </div>
 
       <div className="bg-white shadow rounded-lg p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-3">
-          {account.friendly_name || 'Account'} {account.account_display && <span className="text-gray-600 font-normal">({account.account_display})</span>}
-        </h3>
+        <div className="flex flex-wrap items-start justify-between gap-4 mb-3">
+          <h3 className="text-lg font-semibold text-gray-900">
+            {account.friendly_name || 'Account'} {account.account_display && <span className="text-gray-600 font-normal">({account.account_display})</span>}
+          </h3>
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-gray-700" htmlFor="account-as-of-date">As of</label>
+            <select
+              id="account-as-of-date"
+              value={selectedAsOfDate ?? ''}
+              onChange={(e) => updateAsOfDate(e.target.value || null)}
+              className="rounded-md border-gray-300 shadow-sm text-sm min-w-[150px]"
+            >
+              {availableDates.length === 0 && <option value="">Latest available</option>}
+              {availableDates.map((d) => (
+                <option key={d} value={d}>
+                  {formatIsoDate(d)}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
         {(account.firm || account.advisor || account.account_display || account.registration_type) && (
           <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-gray-600 mb-4">
             {account.firm && <span><span className="font-medium text-gray-700">Firm:</span> {account.firm}</span>}
@@ -288,11 +361,74 @@ const AccountDrillDown = () => {
         )}
       </div>
 
+      <div className="bg-white shadow rounded-lg p-6">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">Compare Holdings Across Dates</h3>
+            <p className="text-sm text-gray-500 mt-1">
+              Open a side-by-side view of this portfolio&apos;s holdings, values, and weights for two historical snapshots.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1" htmlFor="compare-prior-date">
+                Prior date
+              </label>
+              <select
+                id="compare-prior-date"
+                value={priorDateForComparison ?? ''}
+                onChange={(e) => setComparisonPriorDate(e.target.value || null)}
+                className="rounded-md border-gray-300 shadow-sm text-sm min-w-[150px]"
+              >
+                <option value="">Select date</option>
+                {comparisonDates.map((d) => (
+                  <option key={d} value={d}>{formatIsoDate(d)}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1" htmlFor="compare-current-date">
+                Current date
+              </label>
+              <select
+                id="compare-current-date"
+                value={currentDateForComparison ?? ''}
+                onChange={(e) => setComparisonCurrentDate(e.target.value || null)}
+                className="rounded-md border-gray-300 shadow-sm text-sm min-w-[150px]"
+              >
+                <option value="">Select date</option>
+                {comparisonDates.map((d) => (
+                  <option key={d} value={d}>{formatIsoDate(d)}</option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowComparison(true)}
+              disabled={!canCompareHoldings}
+              className="px-4 py-2 rounded-md bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Compare side by side
+            </button>
+          </div>
+        </div>
+        {comparisonDates.length < 2 && (
+          <p className="mt-3 text-sm text-gray-500">
+            This account needs at least two retained snapshot dates before holdings can be compared.
+          </p>
+        )}
+        {priorDateForComparison && currentDateForComparison && priorDateForComparison === currentDateForComparison && comparisonDates.length >= 2 && (
+          <p className="mt-3 text-sm text-amber-700">
+            Select two different dates to compare holdings.
+          </p>
+        )}
+      </div>
+
       {snap && (
         <>
           {(snap.allocations || []).length > 0 && (
             <div className="bg-white shadow rounded-lg p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Actual vs Target (as of {new Date(snap.snapshot.as_of_date).toLocaleDateString('en-US')})</h3>
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">Actual vs Target (as of {formatIsoDate(snap.snapshot.as_of_date)})</h3>
               <div className="space-y-3">
                 {(snap.allocations || []).map((a) => (
                   <div key={a.asset_class} className="flex items-center gap-4">
@@ -335,8 +471,8 @@ const AccountDrillDown = () => {
             </h3>
             <p className="text-sm text-gray-500 mb-4">
               {(snap.allocations || []).length > 0
-                ? `Holdings grouped by asset class with subtotals and model target comparison (as of ${new Date(snap.snapshot.as_of_date).toLocaleDateString('en-US')}).`
-                : `Holdings with value and percentage (as of ${new Date(snap.snapshot.as_of_date).toLocaleDateString('en-US')}). This strategy is not yet mapped for target comparison.`}
+                ? `Holdings grouped by asset class with subtotals and model target comparison (as of ${formatIsoDate(snap.snapshot.as_of_date)}).`
+                : `Holdings with value and percentage (as of ${formatIsoDate(snap.snapshot.as_of_date)}). This strategy is not yet mapped for target comparison.`}
             </p>
             {(() => {
               const holdings = snap.snapshot.holdings || [];
@@ -468,6 +604,16 @@ const AccountDrillDown = () => {
         <div className="bg-white shadow rounded-lg p-6">
           <p className="text-gray-500">No snapshot data for this account.</p>
         </div>
+      )}
+
+      {showComparison && id && priorDateForComparison && currentDateForComparison && (
+        <HoldingsComparisonModal
+          accountId={id}
+          accountLabel={accountLabel}
+          priorDate={normalizedPriorDate}
+          currentDate={normalizedCurrentDate}
+          onClose={() => setShowComparison(false)}
+        />
       )}
     </div>
   );

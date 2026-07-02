@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { monitoringAPI } from '../../services/api';
+import { monitoringAccountPath } from '../../utils/monitoringNav';
 
 type EquivalentUsageRow = {
   id: string;
@@ -31,6 +32,7 @@ type AccountUsageRow = {
 };
 
 type UnusedEquivalentsProps = {
+  asOfDate?: string | null;
   refreshTrigger?: string | null;
 };
 
@@ -41,8 +43,8 @@ type UnmappedTickerRow = {
   strategy_names: string[];
 };
 
-const UnusedEquivalents = ({ refreshTrigger }: UnusedEquivalentsProps) => {
-  const [asOfDate, setAsOfDate] = useState<string | null>(null);
+const UnusedEquivalents = ({ asOfDate, refreshTrigger }: UnusedEquivalentsProps) => {
+  const [searchParams] = useSearchParams();
   const [rows, setRows] = useState<EquivalentUsageRow[]>([]);
   const [unmappedTickers, setUnmappedTickers] = useState<UnmappedTickerRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,10 +56,10 @@ const UnusedEquivalents = ({ refreshTrigger }: UnusedEquivalentsProps) => {
   const load = async () => {
     setLoading(true);
     try {
-      const params = asOfDate ? { as_of_date: asOfDate } : undefined;
+      const params = asOfDate ? { as_of_date: asOfDate } : {};
       const [equivRes, unmappedRes] = await Promise.all([
-        monitoringAPI.equivalentsUsage(params),
-        monitoringAPI.unmappedTickers(params),
+        monitoringAPI.equivalentsUsage({ ...params, limit: 1000, offset: 0 }),
+        monitoringAPI.unmappedTickers({ ...params, limit: 1000, offset: 0 }),
       ]);
       setRows(equivRes.data ?? []);
       setUnmappedTickers((unmappedRes.data ?? []).map((u: any) => ({
@@ -122,6 +124,9 @@ const UnusedEquivalents = ({ refreshTrigger }: UnusedEquivalentsProps) => {
   const formatDollars = (v: number) =>
     Number(v).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
   const formatPct = (v: number) => `${Number(v).toFixed(2)}%`;
+  const accountReturnParams = new URLSearchParams(searchParams);
+  accountReturnParams.set('tab', 'unusedequivalents');
+  if (asOfDate) accountReturnParams.set('as_of_date', asOfDate);
 
   const unusedRows = rows.filter((r) => r.is_unused);
 
@@ -188,16 +193,6 @@ const UnusedEquivalents = ({ refreshTrigger }: UnusedEquivalentsProps) => {
           All product equivalents with upload info, total assets, and account count. Click the account count to see which accounts hold each equivalent.
           &quot;Retirement Only&quot; indicates equivalents used exclusively by Retirement accounts.
         </p>
-        <div className="flex items-center gap-2 mb-4">
-          <label className="text-sm text-gray-600">As of date:</label>
-          <input
-            type="date"
-            value={asOfDate ?? ''}
-            onChange={(e) => setAsOfDate(e.target.value || null)}
-            className="rounded-md border-gray-300 shadow-sm text-sm"
-          />
-        </div>
-
         {loading ? (
           <p className="text-sm text-gray-500">Loading…</p>
         ) : rows.length === 0 ? (
@@ -368,7 +363,7 @@ const UnusedEquivalents = ({ refreshTrigger }: UnusedEquivalentsProps) => {
                             <td className="px-4 py-2 text-sm text-right text-gray-700">{formatPct(a.pct_of_equivalent_total)}</td>
                             <td className="px-4 py-2 text-sm text-right">
                               <Link
-                                to={`/monitoring/account/${a.account_id}`}
+                                to={monitoringAccountPath(a.account_id, accountReturnParams)}
                                 className="text-indigo-600 hover:text-indigo-800 font-medium"
                                 onClick={closeModal}
                               >

@@ -66,28 +66,10 @@ if (-not (Test-Path $frontendDist)) {
     exit 1
 }
 
-$bucketExists = gsutil ls -b "gs://$BUCKET_NAME" 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Creating bucket gs://$BUCKET_NAME ..." -ForegroundColor Gray
-    gsutil mb -p $PROJECT_ID -c STANDARD -l $REGION "gs://$BUCKET_NAME"
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-}
-
-gsutil -m rsync -r -d $frontendDist "gs://$BUCKET_NAME"
+& (Join-Path $scriptDir "sync-frontend-to-gcs.ps1") -DistDir $frontendDist
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-Write-Host "Setting content types and cache headers..." -ForegroundColor Gray
-$ErrorActionPreferenceSave = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-# index.html: no-cache so browser always fetches latest (avoids stale app after deploy)
-gsutil -m setmeta -h "Content-Type:text/html" -h "Cache-Control:no-cache, no-store, must-revalidate" "gs://$BUCKET_NAME/*.html" 2>&1 | Out-Null
-gsutil -m setmeta -h "Content-Type:application/javascript" "gs://$BUCKET_NAME/assets/*.js" 2>&1 | Out-Null
-gsutil -m setmeta -h "Content-Type:text/css" "gs://$BUCKET_NAME/assets/*.css" 2>&1 | Out-Null
-gsutil iam ch allUsers:objectViewer "gs://$BUCKET_NAME" 2>&1 | Out-Null
-gsutil web set -m index.html -e index.html "gs://$BUCKET_NAME" 2>&1 | Out-Null
-$ErrorActionPreference = $ErrorActionPreferenceSave
-
-Write-Host "[OK] Frontend deployed" -ForegroundColor Green
+Write-Host "[OK] Frontend deployed to tat-frontend + tat.auourinvest.com buckets" -ForegroundColor Green
 Write-Host ""
 
 # Output URLs
@@ -98,5 +80,6 @@ $backendUrl = gcloud run services describe tat-backend --region=$REGION --format
 if ($backendUrl -and -not $backendUrl.Contains("ERROR")) {
     Write-Host "Backend:  $backendUrl" -ForegroundColor White
 }
-Write-Host "Frontend: https://storage.googleapis.com/$BUCKET_NAME/index.html" -ForegroundColor White
+Write-Host "Frontend (storage URL): https://storage.googleapis.com/$BUCKET_NAME/index.html" -ForegroundColor White
+Write-Host "Frontend (custom domain): https://tat.auourinvest.com/" -ForegroundColor White
 Write-Host ""

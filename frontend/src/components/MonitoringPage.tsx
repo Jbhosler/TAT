@@ -1,6 +1,9 @@
-import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { formatIsoDate } from '../utils/formatIsoDate';
+import { monitoringAccountPath, monitoringListPath, parseMonitoringTab, type MonitoringTab } from '../utils/monitoringNav';
 import HeatMap from './monitoring/HeatMap';
+import { monitoringAPI } from '../services/api';
 import TotalFirm from './monitoring/TotalFirm';
 import ConcentrationReport from './monitoring/ConcentrationReport';
 import AccountDetailsByAdviser from './monitoring/AccountDetailsByAdviser';
@@ -11,8 +14,83 @@ import AccountDrillDown from './monitoring/AccountDrillDown';
 import ConcentrationAccountList from './monitoring/ConcentrationAccountList';
 
 const MonitoringPage = () => {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { id: accountId, ticker, grade } = useParams<{ id?: string; ticker?: string; grade?: string }>();
-  const [activeTab, setActiveTab] = useState<'heatmap' | 'totalfirm' | 'concentration' | 'byadviser' | 'uploadchanges' | 'unusedequivalents' | 'equivalentreview'>('totalfirm');
+  const activeTab = parseMonitoringTab(searchParams.get('tab'));
+  const selectedAsOfDate = searchParams.get('as_of_date') || null;
+  const [snapshotDates, setSnapshotDates] = useState<string[]>([]);
+
+  const setActiveTab = (tab: MonitoringTab) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set('tab', tab);
+      return next;
+    });
+  };
+
+  const setSelectedAsOfDate = (value: string | null) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (value) next.set('as_of_date', value);
+      else next.delete('as_of_date');
+      return next;
+    }, { replace: true });
+  };
+
+  useEffect(() => {
+    monitoringAPI
+      .snapshotDates()
+      .then((res) => {
+        const dates = res.data?.dates ?? [];
+        setSnapshotDates(dates);
+        if (!searchParams.get('as_of_date') && res.data?.latest_date) {
+          setSearchParams((prev) => {
+            const next = new URLSearchParams(prev);
+            if (!next.get('as_of_date')) next.set('as_of_date', res.data.latest_date!);
+            return next;
+          }, { replace: true });
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to load monitoring snapshot dates:', err);
+        setSnapshotDates([]);
+      });
+  }, []);
+
+  const monitoringBackPath = monitoringListPath(searchParams);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<Array<{ id: string; synthetic_id: string; friendly_name: string | null; advisor: string | null; account_display: string | null }>>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+
+  const handleAccountSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const q = searchQuery.trim();
+    if (!q) return;
+    setSearchLoading(true);
+    setSearchError(null);
+    setSearchResults([]);
+    try {
+      const res = await monitoringAPI.searchAccountsBySyntheticId(
+        q,
+        selectedAsOfDate ? { as_of_date: selectedAsOfDate } : undefined
+      );
+      const accounts = res.data ?? [];
+      setSearchResults(accounts);
+      if (accounts.length === 1) {
+        navigate(monitoringAccountPath(accounts[0].id, searchParams));
+        setSearchQuery('');
+        setSearchResults([]);
+      } else if (accounts.length === 0) {
+        setSearchError('No accounts found');
+      }
+    } catch {
+      setSearchError('Search failed');
+    } finally {
+      setSearchLoading(false);
+    }
+  };
 
   if (accountId) {
     return (
@@ -22,7 +100,7 @@ const MonitoringPage = () => {
             <div className="flex justify-between h-16">
               <div className="flex items-center gap-4">
                 <h1 className="text-xl font-bold text-gray-900">Monitoring</h1>
-                <Link to="/monitoring" className="text-sm text-indigo-600 hover:text-indigo-800">← Back</Link>
+                <Link to={monitoringBackPath} className="text-sm text-indigo-600 hover:text-indigo-800">← Back</Link>
               </div>
               <div className="flex items-center gap-4">
                 <Link to="/dashboard" className="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium">Dashboard</Link>
@@ -33,7 +111,7 @@ const MonitoringPage = () => {
           </div>
         </nav>
         <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
-          <AccountDrillDown />
+          <AccountDrillDown backPath={monitoringBackPath} availableDates={snapshotDates} />
         </main>
       </div>
     );
@@ -47,7 +125,7 @@ const MonitoringPage = () => {
             <div className="flex justify-between h-16">
               <div className="flex items-center gap-4">
                 <h1 className="text-xl font-bold text-gray-900">Monitoring</h1>
-                <Link to="/monitoring" className="text-sm text-indigo-600 hover:text-indigo-800">← Back</Link>
+                <Link to={monitoringBackPath} className="text-sm text-indigo-600 hover:text-indigo-800">← Back</Link>
               </div>
               <div className="flex items-center gap-4">
                 <Link to="/dashboard" className="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium">Dashboard</Link>
@@ -68,9 +146,49 @@ const MonitoringPage = () => {
     <div className="min-h-screen bg-gray-50">
       <nav className="bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
-            <div className="flex items-center">
+          <div className="flex justify-between h-16 items-center">
+            <div className="flex items-center gap-6">
               <h1 className="text-xl font-bold text-gray-900">Monitoring</h1>
+              <form onSubmit={handleAccountSearch} className="relative">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => { setSearchQuery(e.target.value); setSearchError(null); setSearchResults([]); }}
+                  placeholder="Search by account ID (synthetic ID)..."
+                  className="w-64 rounded-md border border-gray-300 py-1.5 pl-3 pr-9 text-sm placeholder:text-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  disabled={searchLoading}
+                />
+                <button
+                  type="submit"
+                  disabled={searchLoading || !searchQuery.trim()}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded px-2 py-0.5 text-sm font-medium text-indigo-600 hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {searchLoading ? '…' : 'Search'}
+                </button>
+                {searchError && (
+                  <p className="absolute left-0 top-full mt-1 text-xs text-red-600">{searchError}</p>
+                )}
+                {searchResults.length > 1 && (
+                  <div className="absolute left-0 top-full z-10 mt-1 w-80 rounded-md border border-gray-200 bg-white py-1 shadow-lg">
+                    <p className="px-3 py-1 text-xs text-gray-500">{searchResults.length} accounts found</p>
+                    {searchResults.map((a) => (
+                      <Link
+                        key={a.id}
+                        to={monitoringAccountPath(a.id, searchParams)}
+                        onClick={() => { setSearchQuery(''); setSearchResults([]); }}
+                        className="block px-3 py-2 text-sm hover:bg-gray-50"
+                      >
+                        {a.friendly_name || a.synthetic_id}
+                        {(a.advisor || a.account_display) && (
+                          <span className="ml-2 text-gray-500">
+                            — {[a.advisor, a.account_display].filter(Boolean).join(' ')}
+                          </span>
+                        )}
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </form>
             </div>
             <div className="flex items-center gap-4">
               <Link to="/dashboard" className="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium">Dashboard</Link>
@@ -157,13 +275,37 @@ const MonitoringPage = () => {
           </nav>
         </div>
 
+        {activeTab !== 'uploadchanges' && activeTab !== 'equivalentreview' && (
+          <div className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
+            <label className="text-sm font-medium text-gray-700" htmlFor="monitoring-as-of-date">
+              Historical as-of date
+            </label>
+            <select
+              id="monitoring-as-of-date"
+              value={selectedAsOfDate ?? ''}
+              onChange={(e) => setSelectedAsOfDate(e.target.value || null)}
+              className="rounded-md border-gray-300 shadow-sm text-sm min-w-[160px]"
+            >
+              {snapshotDates.length === 0 && <option value="">Latest available</option>}
+              {snapshotDates.map((d) => (
+                <option key={d} value={d}>
+                  {formatIsoDate(d)}
+                </option>
+              ))}
+            </select>
+            <span className="text-xs text-gray-500">
+              Reports, account values, holdings, and drill-downs use the selected snapshot date.
+            </span>
+          </div>
+        )}
+
         <div className="space-y-6">
-          {activeTab === 'totalfirm' && <TotalFirm />}
-          {activeTab === 'heatmap' && <HeatMap />}
-          {activeTab === 'concentration' && <ConcentrationReport />}
+          {activeTab === 'totalfirm' && <TotalFirm asOfDate={selectedAsOfDate} />}
+          {activeTab === 'heatmap' && <HeatMap asOfDate={selectedAsOfDate} />}
+          {activeTab === 'concentration' && <ConcentrationReport asOfDate={selectedAsOfDate} />}
           {activeTab === 'byadviser' && <AccountDetailsByAdviser />}
-          {activeTab === 'uploadchanges' && <UploadChanges />}
-          {activeTab === 'unusedequivalents' && <UnusedEquivalents />}
+          {activeTab === 'uploadchanges' && <UploadChanges snapshotDates={snapshotDates} />}
+          {activeTab === 'unusedequivalents' && <UnusedEquivalents asOfDate={selectedAsOfDate} />}
           {activeTab === 'equivalentreview' && <EquivalentReview />}
         </div>
       </main>

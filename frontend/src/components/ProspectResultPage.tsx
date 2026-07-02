@@ -167,8 +167,11 @@ const ProspectResultPage = () => {
           <Link to="/scenarios" className="text-sm text-indigo-600 hover:text-indigo-800">
             ← Back to Scenarios
           </Link>
-          <Link to="/dashboard" className="text-sm text-gray-600 hover:text-gray-800">
-            Dashboard
+          <Link
+            to={`/dashboard?prospect=${id}`}
+            className="text-sm text-indigo-600 hover:text-indigo-800"
+          >
+            Edit scenario in Dashboard
           </Link>
           {hasDocument && (
             <button

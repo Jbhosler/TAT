@@ -204,10 +204,56 @@ const ProductEquivalents = ({ strategies = [], onStrategiesRefresh }: ProductEqu
     }
   };
 
+  const toCsvCell = (value: unknown): string => {
+    const text = value == null ? '' : String(value);
+    const escaped = text.replace(/"/g, '""');
+    return /[",\n]/.test(escaped) ? `"${escaped}"` : escaped;
+  };
+
+  const handleExportCsv = () => {
+    if (!selectedStrategy || equivalents.length === 0) return;
+    const strategyName = strategies.find((s) => s.id === selectedStrategy)?.name ?? 'strategy';
+    const rows = [
+      [
+        'Legacy Ticker',
+        'Model Ticker',
+        'Grade',
+        'Buy Control',
+        'Sell Control',
+        'Custodian',
+        'Notes',
+        'Description',
+      ],
+      ...equivalents.map((e) => [
+        e.legacy_ticker ?? '',
+        e.model_ticker ?? '',
+        e.grade ?? '',
+        e.buy_control ?? '',
+        e.sell_control ?? '',
+        e.custodian ?? '',
+        e.notes ?? '',
+        e.description ?? '',
+      ]),
+    ];
+    const csvContent = rows
+      .map((r) => r.map((c) => toCsvCell(c)).join(','))
+      .join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const safeName = strategyName.replace(/[^\w.-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${safeName || 'strategy'}-equivalents.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="bg-white shadow rounded-lg p-6">
       <h2 className="text-lg font-semibold text-gray-900 mb-4">
-        Product Equivalents (GE_Alt.csv)
+        Product Equivalents (Strategy Alt File)
       </h2>
 
       <div className="space-y-6">
@@ -402,9 +448,18 @@ const ProductEquivalents = ({ strategies = [], onStrategiesRefresh }: ProductEqu
                     </div>
                   )}
                   <div>
-                    <h3 className="text-sm font-medium text-gray-700 mb-4">
-                      Current Product Equivalents
-                    </h3>
+                    <div className="mb-4 flex items-center justify-between gap-3">
+                      <h3 className="text-sm font-medium text-gray-700">
+                        Current Product Equivalents
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={handleExportCsv}
+                        className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                      >
+                        Export CSV
+                      </button>
+                    </div>
                     <div className="overflow-x-auto">
                       <table className="min-w-full divide-y divide-gray-200">
                         <thead className="bg-gray-50">
