@@ -582,17 +582,6 @@ def _build_styles() -> Dict[str, ParagraphStyle]:
             textColor=AUOUR_NAVY_MUTED,
             spaceAfter=14,
         ),
-        "pull_quote": ParagraphStyle(
-            "PullQuote",
-            parent=base["Normal"],
-            fontName=_FONT_SERIF_ITALIC,
-            fontSize=12.8,
-            leading=19.5,
-            textColor=AUOUR_NAVY_SOFT,
-            leftIndent=18,
-            spaceBefore=8,
-            spaceAfter=14,
-        ),
         "caption": ParagraphStyle(
             "Caption",
             parent=base["Normal"],
@@ -872,22 +861,12 @@ def _brand_table_style(n_rows: int, subtotal_rows: Optional[List[int]] = None) -
     return TableStyle(cmds)
 
 
-def _parse_narrative(additional_text: Optional[str]) -> Tuple[List[str], Optional[str]]:
-    """
-    Split additional_text into body paragraphs and an optional pull-quote.
-    A paragraph starting with '>' is treated as the pull-quote.
-    """
+def _split_paragraphs(additional_text: Optional[str]) -> List[str]:
+    """Split optional narrative into paragraphs on blank lines."""
     if not additional_text:
-        return [], None
-    paragraphs = [p.strip() for p in str(additional_text).split("\n\n") if p.strip()]
-    body: List[str] = []
-    quote: Optional[str] = None
-    for p in paragraphs:
-        if p.startswith(">") and quote is None:
-            quote = p.lstrip(">").strip()
-        else:
-            body.append(p)
-    return body, quote
+        return []
+    normalized = str(additional_text).replace("\r\n", "\n").replace("\r", "\n")
+    return [p.strip() for p in normalized.split("\n\n") if p.strip()]
 
 
 def _asset_class_sort_key(ac: str, order_index: Dict[str, int]):
@@ -1135,41 +1114,8 @@ def build_transition_report_pdf(
     # Sample: card top ~381 → body ~512; card height 108 → ~23pt after cards
     story.append(Spacer(1, 22))
 
-    body_paras, pull_quote = _parse_narrative(additional_text)
-    # Sample page 1 fits ~2 narrative paragraphs; pull-quote + remainder continue on page 2.
-    if body_paras:
-        mid = min(2, len(body_paras))
-        for p in body_paras[:mid]:
-            story.append(Paragraph(_xml_safe(p), styles["body"]))
-        if pull_quote or body_paras[mid:]:
-            story.append(PageBreak())
-            if pull_quote:
-                quote_table = Table(
-                    [[Paragraph(_xml_safe(pull_quote), styles["pull_quote"])]],
-                    colWidths=[w],
-                )
-                quote_table.setStyle(TableStyle([
-                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-                    ("LINEBEFORE", (0, 0), (0, 0), 2, AUOUR_BRASS),
-                    ("LEFTPADDING", (0, 0), (0, 0), 18),
-                    ("TOPPADDING", (0, 0), (-1, -1), 2),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-                ]))
-                story.append(quote_table)
-            for p in body_paras[mid:]:
-                story.append(Paragraph(_xml_safe(p), styles["body"]))
-    elif pull_quote:
-        story.append(PageBreak())
-        quote_table = Table(
-            [[Paragraph(_xml_safe(pull_quote), styles["pull_quote"])]],
-            colWidths=[w],
-        )
-        quote_table.setStyle(TableStyle([
-            ("LINEBEFORE", (0, 0), (0, 0), 2, AUOUR_BRASS),
-            ("LEFTPADDING", (0, 0), (0, 0), 18),
-        ]))
-        story.append(quote_table)
+    for p in _split_paragraphs(additional_text):
+        story.append(Paragraph(_xml_safe(p), styles["body"]))
 
     story.append(PageBreak())
 
