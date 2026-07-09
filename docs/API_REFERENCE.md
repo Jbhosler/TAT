@@ -238,7 +238,7 @@ Returns the latest calculated `TransitionResult`.
 ```
 
 ### `GET /api/prospects/{prospect_id}/report-pdf`
-Generates and returns a landscape PDF transition report (application/pdf).
+Generates and returns a portrait PDF transition report (application/pdf).
 
 ### `GET /api/prospects/{prospect_id}/stale-check`
 Returns `{ "is_stale": true/false }`. Stale when the target strategy/blend version has changed since the last calculation.

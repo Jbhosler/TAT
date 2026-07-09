@@ -1229,7 +1229,7 @@ async def get_report_pdf(
     additional_text: str | None = None,
     db: Session = Depends(get_db)
 ):
-    """Generate landscape PDF transition report for the prospect's latest result."""
+    """Generate portrait PDF transition report for the prospect's latest result."""
     prospect = db.query(Prospect).filter(Prospect.id == prospect_id).first()
     if not prospect:
         raise HTTPException(status_code=404, detail="Prospect not found")
