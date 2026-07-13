@@ -29,6 +29,7 @@ from reportlab.platypus import (
     PageBreak,
     Flowable,
     HRFlowable,
+    KeepTogether,
 )
 from reportlab.lib.enums import TA_LEFT, TA_RIGHT
 from reportlab.pdfbase import pdfmetrics
@@ -89,7 +90,7 @@ THINGS_TO_NOTE = [
     (
         "Risk Priority Over Tax Efficiency",
         "A shift in market risk per our risk models may trigger a rebalance independent of "
-        "this transition schedule, likely generating an additional taxable event. Principal "
+        "this transition schedule, potentially generating an additional taxable event. Principal "
         "protection supersedes tax minimization in all cases.",
     ),
     (
@@ -1285,7 +1286,6 @@ def build_transition_report_pdf(
     cur_table.setStyle(_brand_table_style(len(cur_rows), cur_subs))
     story.append(cur_table)
 
-    story.append(Paragraph("Proposed portfolio", styles["holdings_label"]))
     prop_rows, prop_subs = _build_holdings_table_rows(
         post_holdings, "proposed", proposed_total_val or 1.0, asset_class_order, styles
     )
@@ -1295,7 +1295,10 @@ def build_transition_report_pdf(
         repeatRows=1,
     )
     prop_table.setStyle(_brand_table_style(len(prop_rows), prop_subs))
-    story.append(prop_table)
+    story.append(KeepTogether([
+        Paragraph("Proposed portfolio", styles["holdings_label"]),
+        prop_table,
+    ]))
     story.append(Paragraph(
         "Totals are rounded to whole dollars; small rounding differences may occur.",
         styles["caption"],
