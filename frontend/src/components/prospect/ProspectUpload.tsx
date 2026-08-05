@@ -14,7 +14,7 @@ interface ProspectUploadProps {
   onUploadComplete: (prospectId: string) => void;
   /** When set, edit an existing prospect's holdings instead of creating a new one */
   prospectId?: string | null;
-  onHoldingsSaved?: () => void;
+  onHoldingsSaved?: (meta: { holdingCount: number }) => void;
   /** When true, strategy is chosen on Dashboard; hide duplicate selector here */
   hideStrategySelector?: boolean;
 }
@@ -47,6 +47,8 @@ const ProspectUpload = ({
   const [manualHoldings, setManualHoldings] = useState<ManualHolding[]>([
     { ticker: '', value: '', unrealized_gain_loss: '' },
   ]);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!prospectId) return;
@@ -165,9 +167,20 @@ const ProspectUpload = ({
     return filled.length > 0;
   };
 
+  const filledHoldings = manualHoldings.filter(
+    (r) => r.ticker.trim() !== '' && r.value.trim() !== ''
+  );
+  const holdingsTotalValue = filledHoldings.reduce(
+    (sum, r) => sum + (parseFloat(r.value.trim().replace(/[$,]/g, '')) || 0),
+    0
+  );
+
   const handleUpload = async () => {
+    setSaveError(null);
+    setSaveMessage(null);
+
     if (!isStrategySelectionReady(strategySelection)) {
-      alert('Please select a strategy or complete a valid blend (weights must sum to 100%)');
+      setSaveError('Select a strategy or complete a valid blend (weights must sum to 100%).');
       return;
     }
 
@@ -175,31 +188,29 @@ const ProspectUpload = ({
     const strategyBlend = blendPayloadFromSelection(strategySelection);
 
     if (!prospectName.trim()) {
-      alert('Please enter a prospect name');
+      setSaveError('Enter a prospect name.');
       return;
     }
 
     const content = getContentToUpload();
     if (!content) {
-      if (inputMode === 'manual') {
-        alert('Add at least one holding with Ticker and Value.');
-      } else {
-        alert('Please upload a CSV file or enter holdings manually.');
-      }
+      setSaveError(
+        inputMode === 'manual'
+          ? 'Add at least one holding with Ticker and Value.'
+          : 'Upload a CSV file or enter holdings manually.'
+      );
       return;
     }
 
     setLoading(true);
     try {
       if (isEditMode && prospectId) {
-        const holdings = manualHoldings
-          .filter((r) => r.ticker.trim() !== '' && r.value.trim() !== '')
-          .map((r) => ({
-            ticker: r.ticker.trim(),
-            value: parseFloat(r.value.trim().replace(/[$,]/g, '')) || 0,
-            unrealized_gain_loss:
-              parseFloat(r.unrealized_gain_loss.trim().replace(/[$,]/g, '')) || 0,
-          }));
+        const holdings = filledHoldings.map((r) => ({
+          ticker: r.ticker.trim(),
+          value: parseFloat(r.value.trim().replace(/[$,]/g, '')) || 0,
+          unrealized_gain_loss:
+            parseFloat(r.unrealized_gain_loss.trim().replace(/[$,]/g, '')) || 0,
+        }));
         await prospectsAPI.updateHoldings(prospectId, {
           name: prospectName.trim(),
           holdings,
@@ -208,11 +219,14 @@ const ProspectUpload = ({
           try {
             await prospectsAPI.uploadDocument(prospectId, pdfFile);
           } catch (docErr: any) {
-            alert(docErr.response?.data?.detail || 'Holdings saved but PDF upload failed.');
+            setSaveError(docErr.response?.data?.detail || 'Holdings saved but PDF upload failed.');
           }
           setPdfFile(null);
         }
-        onHoldingsSaved?.();
+        setSaveMessage(
+          `Saved ${holdings.length} holding${holdings.length === 1 ? '' : 's'}. Review classification and associations before recalculating.`
+        );
+        onHoldingsSaved?.({ holdingCount: holdings.length });
       } else {
         const response = await prospectsAPI.upload(
           strategyId,
@@ -225,14 +239,17 @@ const ProspectUpload = ({
           try {
             await prospectsAPI.uploadDocument(newProspectId, pdfFile);
           } catch (docErr: any) {
-            alert(docErr.response?.data?.detail || 'Prospect created but PDF upload failed.');
+            setSaveError(docErr.response?.data?.detail || 'Prospect created but PDF upload failed.');
           }
           setPdfFile(null);
         }
         onUploadComplete(newProspectId);
       }
     } catch (err: any) {
-      alert(err.response?.data?.detail || (isEditMode ? 'Failed to save holdings' : 'Failed to upload prospect'));
+      setSaveError(
+        err.response?.data?.detail ||
+          (isEditMode ? 'Failed to save holdings' : 'Failed to upload prospect')
+      );
     } finally {
       setLoading(false);
     }
@@ -317,8 +334,20 @@ const ProspectUpload = ({
 
           {inputMode === 'manual' ? (
             <div>
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-sm font-medium text-gray-700">Holdings</span>
+              <div className="flex justify-between items-center mb-2 gap-3 flex-wrap">
+                <div>
+                  <span className="text-sm font-medium text-gray-700">Holdings</span>
+                  {filledHoldings.length > 0 && (
+                    <span className="ml-2 text-xs text-gray-500">
+                      {filledHoldings.length} row{filledHoldings.length === 1 ? '' : 's'} · $
+                      {holdingsTotalValue.toLocaleString('en-US', {
+                        minimumFractionDigits: 0,
+                        maximumFractionDigits: 0,
+                      })}{' '}
+                      total
+                    </span>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={handleAddManualRow}
@@ -457,6 +486,17 @@ const ProspectUpload = ({
           )}
         </div>
 
+        {saveError && (
+          <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-800">
+            {saveError}
+          </div>
+        )}
+        {saveMessage && !saveError && (
+          <div className="rounded-md bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-800">
+            {saveMessage}
+          </div>
+        )}
+
         <button
           onClick={handleUpload}
           disabled={isSubmitDisabled}
@@ -468,7 +508,7 @@ const ProspectUpload = ({
               : 'Creating prospect...'
             : isEditMode
               ? 'Save holdings'
-              : 'Create prospect'}
+              : 'Create prospect & continue'}
         </button>
       </div>
   );

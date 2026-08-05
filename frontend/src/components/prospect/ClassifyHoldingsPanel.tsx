@@ -100,14 +100,44 @@ const ClassifyHoldingsPanel = ({ prospectId, onComplete }: Props) => {
 
   const spCount = sidePocketIds.size;
   const rbCount = holdings.length - spCount;
+  const totalValue = holdings.reduce((sum, h) => sum + (Number(h.value) || 0), 0);
+  const sidePocketValue = holdings
+    .filter((h) => sidePocketIds.has(h.id))
+    .reduce((sum, h) => sum + (Number(h.value) || 0), 0);
+
+  const selectNone = () => setSidePocketIds(new Set());
+  const selectAll = () => setSidePocketIds(new Set(holdings.map((h) => h.id)));
 
   return (
     <div className="space-y-4">
       <p className="text-sm text-gray-600">
-        Mark each holding that should stay in the <strong>side pocket</strong> (not transitioned
-        with the strategy). Leave unchecked for holdings you will <strong>map</strong> in the next
-        step.
+        Mark holdings that should stay in the <strong>side pocket</strong> (excluded from transition
+        math). Leave unchecked for holdings you will associate to the model in the next step. You can
+        revisit this any time before the final proposal.
       </p>
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-gray-700">
+          Side pocket: <strong>{spCount}</strong> (${fmtMoney(sidePocketValue)}) · To associate:{' '}
+          <strong>{rbCount}</strong> (${fmtMoney(totalValue - sidePocketValue)})
+        </p>
+        <div className="flex gap-3 text-sm">
+          <button
+            type="button"
+            onClick={selectNone}
+            className="text-indigo-600 hover:text-indigo-800"
+          >
+            Clear all
+          </button>
+          <button
+            type="button"
+            onClick={selectAll}
+            className="text-indigo-600 hover:text-indigo-800"
+          >
+            Mark all side pocket
+          </button>
+        </div>
+      </div>
 
       <div className="overflow-x-auto border border-gray-200 rounded-md">
         <table className="min-w-full divide-y divide-gray-200">
@@ -132,7 +162,10 @@ const ClassifyHoldingsPanel = ({ prospectId, onComplete }: Props) => {
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {holdings.map((h) => (
-              <tr key={h.id}>
+              <tr
+                key={h.id}
+                className={sidePocketIds.has(h.id) ? 'bg-amber-50/40' : undefined}
+              >
                 <td className="px-4 py-3">
                   <input
                     type="checkbox"
@@ -155,11 +188,6 @@ const ClassifyHoldingsPanel = ({ prospectId, onComplete }: Props) => {
         </table>
       </div>
 
-      <p className="text-sm text-gray-700">
-        Side pocket: <strong>{spCount}</strong> · To map / transition:{' '}
-        <strong>{rbCount}</strong>
-      </p>
-
       {error && (
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-800">{error}</div>
       )}
@@ -170,7 +198,7 @@ const ClassifyHoldingsPanel = ({ prospectId, onComplete }: Props) => {
         disabled={saving || holdings.length === 0}
         className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
       >
-        {saving ? 'Saving…' : 'Continue to mapping'}
+        {saving ? 'Saving…' : 'Save classification & continue'}
       </button>
     </div>
   );
