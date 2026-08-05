@@ -111,6 +111,7 @@ A prospect scenario (client transition analysis).
 | `strategy_account_links` | JSONB (nullable) | `{strategy_id: account_id}` per blend constituent |
 | `name` | VARCHAR(255) | Prospect / client name |
 | `total_value` | NUMERIC | Portfolio total value |
+| `classification_completed` | BOOLEAN | True after side-pocket choices have been explicitly reviewed; reset when holdings change |
 | `document_pdf` | BYTEA (nullable) | Uploaded prospect document |
 | `document_filename` | VARCHAR(255) | |
 | `monitored_account_id` | UUID FK → `monitored_accounts` (nullable) | Linked monitoring account (legacy single-link) |
@@ -342,6 +343,7 @@ Migrations are accumulated `.sql` files in `cloud/`. They must be applied in the
 | `add-auth-tables.sql` | `authorized_users`, `magic_link_tokens` |
 | `add-monitoring-tables.sql` | Monitoring tables |
 | `add-prospect-strategy-blend.sql` | `strategy_blend`, `strategy_account_links` on `prospects` |
+| `add-prospect-classification-completed.sql` | `classification_completed` on `prospects` |
 | `add-transition-equivalent-usage.sql` | `equivalent_usage` on `transition_results` |
 | `add-transition-result-pdf-additional-text.sql` | `pdf_additional_text` on `transition_results` |
 

@@ -11,7 +11,7 @@ interface ProspectUploadProps {
   strategies: any[];
   strategySelection: StrategySelection;
   onStrategySelectionChange: (selection: StrategySelection) => void;
-  onUploadComplete: (prospectId: string) => void;
+  onUploadComplete: (prospectId: string, warning?: string) => void;
   /** When set, edit an existing prospect's holdings instead of creating a new one */
   prospectId?: string | null;
   onHoldingsSaved?: (meta: { holdingCount: number }) => void;
@@ -235,15 +235,17 @@ const ProspectUpload = ({
           strategyBlend
         );
         const newProspectId = response.data.id;
+        let documentWarning: string | undefined;
         if (pdfFile) {
           try {
             await prospectsAPI.uploadDocument(newProspectId, pdfFile);
           } catch (docErr: any) {
-            setSaveError(docErr.response?.data?.detail || 'Prospect created but PDF upload failed.');
+            documentWarning =
+              docErr.response?.data?.detail || 'Prospect created but PDF upload failed.';
           }
           setPdfFile(null);
         }
-        onUploadComplete(newProspectId);
+        onUploadComplete(newProspectId, documentWarning);
       }
     } catch (err: any) {
       setSaveError(

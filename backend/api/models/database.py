@@ -172,6 +172,7 @@ class Prospect(Base):
     strategy_account_links = Column(JSONB, nullable=True)  # [{strategy_id, monitored_account_id}]
     name = Column(String(255), nullable=False)
     total_value = Column(Numeric(15, 2), nullable=False)
+    classification_completed = Column(Boolean, default=False, nullable=False)
     document_pdf = Column(LargeBinary, nullable=True)
     document_filename = Column(String(255), nullable=True)
     monitored_account_id = Column(UUID(as_uuid=True), ForeignKey("monitored_accounts.id", ondelete="SET NULL"), nullable=True)

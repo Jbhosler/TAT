@@ -497,6 +497,7 @@ def _prospect_to_response(prospect: Prospect, db: Session) -> ProspectResponse:
         strategy_blend=blend if blend else None,
         name=prospect.name,
         total_value=prospect.total_value,
+        classification_completed=prospect.classification_completed,
         holdings=holdings_resp,
         has_document=prospect.document_pdf is not None,
         strategy_account_links=_strategy_account_links_response(db, prospect),
@@ -599,6 +600,8 @@ async def update_prospect_holdings(
             ))
 
     prospect.total_value = total_value
+    # Holdings edits require the adviser to review side-pocket choices again.
+    prospect.classification_completed = False
     _clear_transition_results(db, prospect_id)
     db.commit()
     db.refresh(prospect)
@@ -716,6 +719,7 @@ async def classify_prospect_holdings(
         if h.is_side_pocket:
             side_pocket_count += 1
 
+    prospect.classification_completed = True
     _clear_transition_results(db, prospect_id)
     db.commit()
 

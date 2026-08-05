@@ -235,6 +235,7 @@ class ProspectResponse(BaseModel):
     strategy_blend: Optional[List[StrategyBlendComponent]] = None
     name: str
     total_value: Decimal
+    classification_completed: bool = False
     holdings: List[ProspectHoldingResponse]
     has_document: bool = False
     strategy_account_links: Optional[List[StrategyAccountLinkResponse]] = None

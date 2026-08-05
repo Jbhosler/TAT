@@ -58,6 +58,7 @@ const MappingWizard = ({
 }: MappingWizardProps) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [mappings, setMappings] = useState<Record<string, SavedMapping>>({});
+  const [persistedMappings, setPersistedMappings] = useState<Record<string, SavedMapping>>({});
   const [strategies, setStrategies] = useState<any[]>([]);
   const [showMultiAsset, setShowMultiAsset] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -86,6 +87,7 @@ const MappingWizard = ({
           };
         }
         setMappings(initial);
+        setPersistedMappings(initial);
       } catch (err) {
         console.error('Failed to load existing mappings:', err);
       } finally {
@@ -104,6 +106,10 @@ const MappingWizard = ({
     setForcedSaleTickers(new Set());
   }, [prospectId, unmappedHoldings]);
 
+  useEffect(() => {
+    setShowMultiAsset(false);
+  }, [currentIndex]);
+
   const loadStrategies = async () => {
     try {
       const response = await strategiesAPI.list();
@@ -115,10 +121,22 @@ const MappingWizard = ({
 
   const needsMappingCount = useMemo(() => {
     return unmappedHoldings.filter((h) => {
-      const label = statusLabel(h, mappings[h.ticker], forcedSaleTickers.has(h.ticker));
+      const label = statusLabel(
+        h,
+        persistedMappings[h.ticker],
+        forcedSaleTickers.has(h.ticker)
+      );
       return label === 'Needs mapping';
     }).length;
-  }, [unmappedHoldings, mappings, forcedSaleTickers]);
+  }, [unmappedHoldings, persistedMappings, forcedSaleTickers]);
+
+  const unsavedMappingCount = useMemo(() => {
+    return unmappedHoldings.filter((h) => {
+      const draft = mappings[h.ticker];
+      const persisted = persistedMappings[h.ticker];
+      return JSON.stringify(draft ?? null) !== JSON.stringify(persisted ?? null);
+    }).length;
+  }, [unmappedHoldings, mappings, persistedMappings]);
 
   const currentHolding = unmappedHoldings[currentIndex];
   const currentMapping = mappings[currentHolding?.ticker] || {
@@ -163,6 +181,10 @@ const MappingWizard = ({
         grade: currentMapping.grade,
         dollar_split: currentMapping.dollar_split,
       });
+      setPersistedMappings((prev) => ({
+        ...prev,
+        [currentHolding.ticker]: currentMapping,
+      }));
       onDataChanged?.();
       setInlineMessage(`Saved association for ${currentHolding.ticker}.`);
       advanceOrFinish();
@@ -187,6 +209,11 @@ const MappingWizard = ({
     try {
       await prospectsAPI.markForcedSale(prospectId, currentHolding.ticker);
       setMappings((prev) => {
+        const next = { ...prev };
+        delete next[currentHolding.ticker];
+        return next;
+      });
+      setPersistedMappings((prev) => {
         const next = { ...prev };
         delete next[currentHolding.ticker];
         return next;
@@ -256,6 +283,9 @@ const MappingWizard = ({
           <div className="text-sm text-gray-700">
             <span className="font-medium">{needsMappingCount}</span> still need mapping ·{' '}
             <span className="font-medium">{unmappedHoldings.length}</span> in review
+            {unsavedMappingCount > 0 && (
+              <> · <span className="font-medium text-amber-700">{unsavedMappingCount} unsaved</span></>
+            )}
           </div>
         </div>
 
@@ -271,7 +301,10 @@ const MappingWizard = ({
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {unmappedHoldings.map((holding, index) => {
-                const mapping = mappings[holding.ticker];
+                const mapping = persistedMappings[holding.ticker];
+                const draft = mappings[holding.ticker];
+                const hasUnsavedChange =
+                  JSON.stringify(draft ?? null) !== JSON.stringify(mapping ?? null);
                 const label = statusLabel(
                   holding,
                   mapping,
@@ -281,19 +314,28 @@ const MappingWizard = ({
                 return (
                   <tr
                     key={`${holding.ticker}-${index}`}
-                    onClick={() => {
-                      setCurrentIndex(index);
-                      setInlineError(null);
-                      setInlineMessage(null);
-                    }}
-                    className={`cursor-pointer ${
+                    className={`${
                       isCurrent ? 'bg-indigo-50' : 'hover:bg-gray-50'
                     }`}
                   >
                     <td className="px-3 py-2 text-sm font-medium text-gray-900">
-                      {holding.ticker}
+                      <button
+                        type="button"
+                        disabled={loading}
+                        onClick={() => {
+                          setCurrentIndex(index);
+                          setInlineError(null);
+                          setInlineMessage(null);
+                        }}
+                        className="text-left rounded focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+                      >
+                        {holding.ticker}
+                      </button>
                       {isCurrent && (
                         <span className="ml-2 text-xs font-normal text-indigo-600">editing</span>
+                      )}
+                      {hasUnsavedChange && (
+                        <span className="ml-2 text-xs font-normal text-amber-700">unsaved</span>
                       )}
                     </td>
                     <td className="px-3 py-2 text-sm text-gray-700 text-right whitespace-nowrap">
@@ -313,10 +355,9 @@ const MappingWizard = ({
                     <td className="px-3 py-2 text-sm text-gray-700">
                       {label === 'Forced sale'
                         ? '—'
-                        : mapping?.model_ticker ||
-                          (mapping?.dollar_split
-                            ? Object.keys(mapping.dollar_split).join(', ')
-                            : '—')}
+                        : mapping?.dollar_split
+                          ? Object.keys(mapping.dollar_split).join(', ')
+                          : mapping?.model_ticker || '—'}
                     </td>
                   </tr>
                 );
@@ -325,7 +366,7 @@ const MappingWizard = ({
           </table>
         </div>
 
-        {needsMappingCount === 0 && (
+        {needsMappingCount === 0 && unsavedMappingCount === 0 && (
           <div className="mb-4 flex flex-wrap items-center gap-3 rounded-md border border-green-200 bg-green-50 px-3 py-2">
             <p className="text-sm text-green-900 flex-1">
               All associations in this list are set. Continue to calculate, or click a row to change a mapping.
@@ -380,6 +421,7 @@ const MappingWizard = ({
               Model Ticker
             </label>
             <select
+              disabled={loading}
               className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
               value={currentMapping.model_ticker}
               onChange={(e) => handleMappingChange('model_ticker', e.target.value)}
@@ -406,6 +448,7 @@ const MappingWizard = ({
                 <label key={grade} className="flex items-center">
                   <input
                     type="radio"
+                    disabled={loading}
                     name="grade"
                     value={grade}
                     checked={currentMapping.grade === grade}
@@ -424,6 +467,7 @@ const MappingWizard = ({
             <label className="flex items-center">
               <input
                 type="checkbox"
+                disabled={loading}
                 checked={currentMapping.dollar_split !== null}
                 onChange={(e) => {
                   if (e.target.checked) {
@@ -440,6 +484,7 @@ const MappingWizard = ({
 
           {showMultiAsset && (
             <MultiAssetSplit
+              key={currentHolding.ticker}
               ticker={currentHolding.ticker}
               totalValue={parseFloat(currentHolding.value)}
               modelTickers={modelTickers}
@@ -453,8 +498,9 @@ const MappingWizard = ({
               {currentIndex > 0 && (
                 <button
                   type="button"
+                  disabled={loading}
                   onClick={() => setCurrentIndex(currentIndex - 1)}
-                  className="py-2 px-4 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  className="py-2 px-4 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                 >
                   Previous
                 </button>
@@ -474,8 +520,9 @@ const MappingWizard = ({
               {currentIndex < unmappedHoldings.length - 1 && (
                 <button
                   type="button"
+                  disabled={loading}
                   onClick={() => setCurrentIndex(currentIndex + 1)}
-                  className="py-2 px-4 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  className="py-2 px-4 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                 >
                   Skip for now
                 </button>

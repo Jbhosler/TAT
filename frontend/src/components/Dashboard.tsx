@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import TaxSummary from './TaxSummary';
 import ProspectUpload from './prospect/ProspectUpload';
@@ -44,10 +44,12 @@ const Dashboard = () => {
   const [unmappedCount, setUnmappedCount] = useState(0);
   const [sidePocketCount, setSidePocketCount] = useState(0);
   const [calculating, setCalculating] = useState(false);
+  const [staleCheckPending, setStaleCheckPending] = useState(false);
+  const loadRequestRef = useRef(0);
+  const staleRequestRef = useRef(0);
 
   const targetDirty =
     prospectId != null &&
-    isStrategySelectionReady(strategySelection) &&
     !selectionsEqual(strategySelection, savedStrategySelection);
 
   const loadStrategies = async () => {
@@ -79,20 +81,14 @@ const Dashboard = () => {
   }, []);
 
   const loadProspect = useCallback(async (id: string, preferredStep?: FlowStep) => {
+    const requestId = ++loadRequestRef.current;
     setLoadingProspect(true);
     setBannerError(null);
     try {
       const prospectRes = await prospectsAPI.get(id);
       const prospect = prospectRes.data;
       const selection = selectionFromProspect(prospect);
-      setProspectId(id);
-      setProspectName(prospect.name || '');
-      setStrategySelection(selection);
-      setSavedStrategySelection(selection);
-
       const holdings = prospect.holdings || [];
-      setHoldingCount(holdings.length);
-      setSidePocketCount(holdings.filter((h: any) => h.is_side_pocket).length);
 
       let nextStep: FlowStep = preferredStep || 'upload';
       let resultData: any = null;
@@ -103,19 +99,21 @@ const Dashboard = () => {
         resultData = null;
       }
 
-      const reviewRes = await prospectsAPI.getMappingReview(id);
+      const [reviewRes, unmappedRes] = await Promise.all([
+        prospectsAPI.getMappingReview(id),
+        prospectsAPI.getUnmapped(id),
+      ]);
+      if (requestId !== loadRequestRef.current) return;
+
       const reviewHoldings = reviewRes.data || [];
-      const unmappedRes = await prospectsAPI.getUnmapped(id);
       const unmapped = unmappedRes.data || [];
-      setUnmappedCount(unmapped.length);
-      setMappingHoldings(unmapped.length > 0 ? unmapped : reviewHoldings);
 
       if (!preferredStep) {
         if (resultData) {
           nextStep = 'result';
+        } else if (!prospect.classification_completed) {
+          nextStep = 'classify';
         } else if (unmapped.length > 0 || reviewHoldings.length > 0) {
-          // Resume into associations when work remains or prior mappings exist.
-          // Do not bounce back to classify solely because no side pockets were marked.
           nextStep = 'map';
         } else if (holdings.length > 0) {
           nextStep = 'calculate';
@@ -124,19 +122,30 @@ const Dashboard = () => {
         }
       }
 
+      setProspectId(id);
+      setProspectName(prospect.name || '');
+      setStrategySelection(selection);
+      setSavedStrategySelection(selection);
+      setHoldingCount(holdings.length);
+      setSidePocketCount(holdings.filter((h: any) => h.is_side_pocket).length);
+      setUnmappedCount(unmapped.length);
+      setMappingHoldings(unmapped.length > 0 ? unmapped : reviewHoldings);
       setTransitionResult(resultData);
       setHasStoredResult(Boolean(resultData));
       setResultOutdated(false);
       setStep(nextStep);
 
       if (nextStep === 'result') {
-        checkStaleData(id);
+        void checkStaleData(id);
       }
     } catch (err) {
+      if (requestId !== loadRequestRef.current) return;
       console.error('Failed to load prospect:', err);
       setBannerError('Failed to load scenario.');
     } finally {
-      setLoadingProspect(false);
+      if (requestId === loadRequestRef.current) {
+        setLoadingProspect(false);
+      }
     }
   }, []);
 
@@ -166,11 +175,21 @@ const Dashboard = () => {
   };
 
   const checkStaleData = async (id: string) => {
+    const requestId = ++staleRequestRef.current;
+    setStaleCheckPending(true);
     try {
       const check = await prospectsAPI.staleCheck(id);
+      if (requestId !== staleRequestRef.current) return;
       setStaleWarning(check.data.is_stale);
     } catch {
-      setStaleWarning(false);
+      if (requestId !== staleRequestRef.current) return;
+      // Fail closed: an unverified result must not be downloadable as final.
+      setStaleWarning(true);
+      setBannerError('Could not verify whether this result is current. Recalculate before downloading.');
+    } finally {
+      if (requestId === staleRequestRef.current) {
+        setStaleCheckPending(false);
+      }
     }
   };
 
@@ -179,6 +198,8 @@ const Dashboard = () => {
     setHasStoredResult(false);
     setResultOutdated(true);
     setStaleWarning(false);
+    setStaleCheckPending(false);
+    staleRequestRef.current += 1;
   };
 
   const refreshMappingHoldings = async (id: string) => {
@@ -268,12 +289,17 @@ const Dashboard = () => {
     setStep(next);
   };
 
-  const handleUploadComplete = async (newProspectId: string) => {
+  const handleUploadComplete = async (newProspectId: string, warning?: string) => {
     setProspectId(newProspectId);
     syncProspectQuery(newProspectId);
     setStep('classify');
     setResultOutdated(false);
-    setBannerMessage('Prospect created. Classify side-pocket holdings, then associate the rest.');
+    if (warning) {
+      setBannerError(warning);
+      setBannerMessage(null);
+    } else {
+      setBannerMessage('Prospect created. Classify side-pocket holdings, then associate the rest.');
+    }
     await refreshCounts(newProspectId);
   };
 
@@ -335,12 +361,26 @@ const Dashboard = () => {
 
   const handleCalculate = async () => {
     if (!prospectId) return;
-    if (targetDirty) {
-      setBannerError('Save target portfolio changes before calculating.');
+    if (!isStrategySelectionReady(strategySelection) || targetDirty) {
+      setBannerError('Complete and save target portfolio changes before calculating.');
       return;
     }
-    if (unmappedCount > 0) {
-      setBannerError(`${unmappedCount} holding${unmappedCount === 1 ? '' : 's'} still need mapping.`);
+
+    // Revalidate server state at the action boundary instead of trusting a
+    // potentially stale count from an earlier holdings or mapping request.
+    let currentUnmapped: any[];
+    try {
+      const unmappedRes = await prospectsAPI.getUnmapped(prospectId);
+      currentUnmapped = unmappedRes.data || [];
+    } catch {
+      setBannerError('Could not verify association readiness. Try again before calculating.');
+      return;
+    }
+    setUnmappedCount(currentUnmapped.length);
+    if (currentUnmapped.length > 0) {
+      setBannerError(
+        `${currentUnmapped.length} holding${currentUnmapped.length === 1 ? '' : 's'} still need mapping.`
+      );
       setStep('map');
       await refreshMappingNeeds(prospectId);
       return;
@@ -353,6 +393,8 @@ const Dashboard = () => {
       setHasStoredResult(true);
       setResultOutdated(false);
       setStaleWarning(false);
+      setStaleCheckPending(false);
+      staleRequestRef.current += 1;
       setStep('result');
       setBannerMessage('Transition calculated. Assess results below before downloading the final proposal PDF.');
     } catch (err: any) {
@@ -390,6 +432,8 @@ const Dashboard = () => {
   };
 
   const handleStartNewProspect = () => {
+    loadRequestRef.current += 1;
+    staleRequestRef.current += 1;
     setProspectId(null);
     setProspectName('');
     setStep('upload');
@@ -403,6 +447,7 @@ const Dashboard = () => {
     setHoldingCount(0);
     setUnmappedCount(0);
     setSidePocketCount(0);
+    setStaleCheckPending(false);
     setStrategySelection({ mode: 'single', strategyId: '' });
     setSavedStrategySelection({ mode: 'single', strategyId: '' });
     syncProspectQuery(null);
@@ -449,6 +494,7 @@ const Dashboard = () => {
 
   const readyToCalculate =
     Boolean(prospectId) &&
+    isStrategySelectionReady(strategySelection) &&
     isStrategySelectionReady(savedStrategySelection) &&
     !targetDirty &&
     holdingCount > 0 &&
@@ -801,7 +847,7 @@ const Dashboard = () => {
                 <div className="flex flex-wrap gap-3 mb-4">
                   <button
                     onClick={handleDownloadReportPdf}
-                    disabled={resultOutdated || staleWarning || targetDirty}
+                    disabled={resultOutdated || staleWarning || staleCheckPending || targetDirty}
                     className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50"
                   >
                     Download final proposal PDF

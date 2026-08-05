@@ -124,15 +124,17 @@ const ClassifyHoldingsPanel = ({ prospectId, onComplete }: Props) => {
         <div className="flex gap-3 text-sm">
           <button
             type="button"
+            disabled={saving}
             onClick={selectNone}
-            className="text-indigo-600 hover:text-indigo-800"
+            className="text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
           >
             Clear all
           </button>
           <button
             type="button"
+            disabled={saving}
             onClick={selectAll}
-            className="text-indigo-600 hover:text-indigo-800"
+            className="text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
           >
             Mark all side pocket
           </button>
@@ -169,6 +171,7 @@ const ClassifyHoldingsPanel = ({ prospectId, onComplete }: Props) => {
                 <td className="px-4 py-3">
                   <input
                     type="checkbox"
+                    disabled={saving}
                     className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
                     checked={sidePocketIds.has(h.id)}
                     onChange={() => toggleSidePocket(h.id)}
