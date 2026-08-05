@@ -2,6 +2,7 @@ import type { FlowStep } from './FlowStepNav';
 
 export type AnalysisStatus = {
   holdingCount: number;
+  classificationCompleted: boolean;
   unmappedCount: number;
   sidePocketCount: number;
   targetDirty: boolean;
@@ -39,6 +40,7 @@ const AnalysisStatusPanel = ({
 }: AnalysisStatusPanelProps) => {
   const {
     holdingCount,
+    classificationCompleted,
     unmappedCount,
     sidePocketCount,
     targetDirty,
@@ -59,11 +61,16 @@ const AnalysisStatusPanel = ({
   if (!targetReady) blockers.push('Choose a target strategy or blend');
   if (targetDirty) blockers.push('Save target portfolio changes');
   if (holdingCount === 0) blockers.push('Add current holdings');
+  if (holdingCount > 0 && !classificationCompleted) blockers.push('Review side-pocket classification');
   if (unmappedCount > 0) blockers.push(`Map ${unmappedCount} unmapped holding${unmappedCount === 1 ? '' : 's'}`);
   if (resultOutdated || staleWarning) blockers.push('Recalculate to refresh proposal results');
 
   const readyToCalculate =
-    targetReady && !targetDirty && holdingCount > 0 && unmappedCount === 0;
+    targetReady &&
+    !targetDirty &&
+    holdingCount > 0 &&
+    classificationCompleted &&
+    unmappedCount === 0;
 
   return (
     <div className="bg-white shadow rounded-lg p-4 sm:p-5 space-y-4">
@@ -129,6 +136,9 @@ const AnalysisStatusPanel = ({
           </p>
           {sidePocketCount > 0 && (
             <p className="text-xs mt-1 opacity-80">{sidePocketCount} side pocket</p>
+          )}
+          {holdingCount > 0 && !classificationCompleted && (
+            <p className="text-xs mt-1 text-amber-800">Classification review required</p>
           )}
         </button>
 

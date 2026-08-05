@@ -901,6 +901,11 @@ async def calculate_transition(
     prospect = db.query(Prospect).filter(Prospect.id == prospect_id).first()
     if not prospect:
         raise HTTPException(status_code=404, detail="Prospect not found")
+    if not prospect.classification_completed:
+        raise HTTPException(
+            status_code=409,
+            detail="Review and save side-pocket classification before calculating",
+        )
     
     positions, display_strategy_name, version_for_result, versions_snapshot = _resolve_strategy_target(
         db, prospect

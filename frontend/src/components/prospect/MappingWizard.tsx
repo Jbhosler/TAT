@@ -321,7 +321,7 @@ const MappingWizard = ({
                     <td className="px-3 py-2 text-sm font-medium text-gray-900">
                       <button
                         type="button"
-                        disabled={loading}
+                        disabled={loading || !mappingsLoaded}
                         onClick={() => {
                           setCurrentIndex(index);
                           setInlineError(null);
@@ -421,7 +421,7 @@ const MappingWizard = ({
               Model Ticker
             </label>
             <select
-              disabled={loading}
+              disabled={loading || !mappingsLoaded}
               className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
               value={currentMapping.model_ticker}
               onChange={(e) => handleMappingChange('model_ticker', e.target.value)}
@@ -448,7 +448,7 @@ const MappingWizard = ({
                 <label key={grade} className="flex items-center">
                   <input
                     type="radio"
-                    disabled={loading}
+                    disabled={loading || !mappingsLoaded}
                     name="grade"
                     value={grade}
                     checked={currentMapping.grade === grade}
@@ -467,7 +467,7 @@ const MappingWizard = ({
             <label className="flex items-center">
               <input
                 type="checkbox"
-                disabled={loading}
+                disabled={loading || !mappingsLoaded}
                 checked={currentMapping.dollar_split !== null}
                 onChange={(e) => {
                   if (e.target.checked) {
@@ -482,7 +482,7 @@ const MappingWizard = ({
             </label>
           </div>
 
-          {showMultiAsset && (
+          {showMultiAsset && mappingsLoaded && (
             <MultiAssetSplit
               key={currentHolding.ticker}
               ticker={currentHolding.ticker}
@@ -498,7 +498,7 @@ const MappingWizard = ({
               {currentIndex > 0 && (
                 <button
                   type="button"
-                  disabled={loading}
+                  disabled={loading || !mappingsLoaded}
                   onClick={() => setCurrentIndex(currentIndex - 1)}
                   className="py-2 px-4 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                 >
@@ -520,7 +520,7 @@ const MappingWizard = ({
               {currentIndex < unmappedHoldings.length - 1 && (
                 <button
                   type="button"
-                  disabled={loading}
+                  disabled={loading || !mappingsLoaded}
                   onClick={() => setCurrentIndex(currentIndex + 1)}
                   className="py-2 px-4 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                 >
