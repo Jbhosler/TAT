@@ -115,6 +115,7 @@ CREATE TABLE prospects (
     strategy_account_links JSONB,
     name VARCHAR(255) NOT NULL,
     total_value NUMERIC(15, 2) NOT NULL,
+    classification_completed BOOLEAN NOT NULL DEFAULT FALSE,
     document_pdf BYTEA,
     document_filename VARCHAR(255),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
