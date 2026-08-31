@@ -1211,21 +1211,17 @@ def _adviser_strategy_snapshot_aggregate_sql(
     db: Session, snapshot_date: date
 ) -> Dict[Tuple[str, str], Dict[str, Any]]:
     """Aggregate account count and AUM by adviser × uploaded model for one snapshot date."""
-    adviser_expr = func.coalesce(func.nullif(func.trim(MonitoredAccount.advisor), ""), "Unknown")
-    strategy_expr = func.coalesce(
-        func.nullif(func.trim(MonitoredAccount.external_model_name), ""), "Unmapped"
-    )
     rows = (
         db.query(
-            adviser_expr,
-            strategy_expr,
+            MonitoredAccount.advisor,
+            MonitoredAccount.external_model_name,
             func.count(AccountSnapshot.id),
             func.coalesce(func.sum(AccountSnapshot.total_value), 0),
         )
         .select_from(AccountSnapshot)
         .join(MonitoredAccount, AccountSnapshot.monitored_account_id == MonitoredAccount.id)
         .filter(AccountSnapshot.as_of_date == snapshot_date)
-        .group_by(adviser_expr, strategy_expr)
+        .group_by(MonitoredAccount.advisor, MonitoredAccount.external_model_name)
         .all()
     )
     out: Dict[Tuple[str, str], Dict[str, Any]] = {}
