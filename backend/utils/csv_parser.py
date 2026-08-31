@@ -555,14 +555,19 @@ def _format_firm_for_hash(firm: str) -> str:
 def _registration_type_header_indices(headers: List[str]) -> Dict[str, int]:
     """
     Return column index for registration-type CSV. Matches columns used for synthetic_id
-    plus Registration Type. Supports: Adviser, Account, Product/Program/Model, Firm, Enterprise,
-    Account Number, Registration Type.
+    plus Registration Type and Advisor CRD. Supports: Adviser, Account, Product/Program/Model,
+    Firm, Enterprise, Account Number, Registration Type, Advisor CRD.
     """
     normalized = [_normalize_header(h).strip().lower() for h in headers]
     result: Dict[str, Any] = {
         "account": None, "advisor": None, "model": None, "firm": None, "enterprise": None,
-        "account_number": None, "registration_type": None,
+        "account_number": None, "registration_type": None, "advisor_crd": None,
     }
+    # Claim CRD before adviser matching so "Advisor CRD" does not steal the adviser name.
+    for i, norm in enumerate(normalized):
+        if norm and "crd" in norm:
+            result["advisor_crd"] = i
+            break
     name_to_key = [
         ("account", ["account"]),
         ("advisor", ["advisor", "adviser"]),
@@ -574,6 +579,8 @@ def _registration_type_header_indices(headers: List[str]) -> Dict[str, int]:
     ]
     for i, norm in enumerate(normalized):
         if not norm:
+            continue
+        if result["advisor_crd"] is not None and i == result["advisor_crd"]:
             continue
         for key, aliases in name_to_key:
             if result[key] is not None:
@@ -590,11 +597,13 @@ def parse_registration_type_csv(csv_content: str) -> List[Dict[str, Any]]:
     Parse registration type CSV for updating monitored accounts.
 
     Expects columns that match the synthetic_id components: Account, Adviser, Product/Model, Firm, Enterprise,
-    plus Registration Type (Retirement, Taxable, Trust). Uses same hash as aggregated holdings:
-    synthetic_id = hash(account|advisor|model|firm|enterprise).
+    plus Registration Type (Retirement, Taxable, Trust) and Advisor CRD. Uses same hash as
+    aggregated holdings: synthetic_id = hash(account|advisor|model|firm|enterprise).
 
     Returns:
-        List of {synthetic_id, registration_type} for rows with valid registration_type.
+        List of {synthetic_id, registration_type, advisor_crd, ...}. Rows with a valid
+        registration type and/or a CRD are included so CRD is not dropped when
+        Registration Type is blank.
     """
     csv_content = (csv_content or "").strip().strip("\ufeff")
     csv_content = csv_content.replace("\r\n", "\n").replace("\r", "\n")
@@ -621,12 +630,14 @@ def parse_registration_type_csv(csv_content: str) -> List[Dict[str, Any]]:
         if len(row) < 2 or not any(str(v).strip() for v in row):
             continue
         reg_type_raw = _cell(row, "registration_type")
-        if not reg_type_raw:
+        crd = _cell(row, "advisor_crd").strip()
+        reg_type = None
+        if reg_type_raw:
+            reg_type_norm = reg_type_raw.strip().lower()
+            if reg_type_norm in valid_types:
+                reg_type = reg_type_raw.strip()
+        if not reg_type and not crd:
             continue
-        reg_type_norm = reg_type_raw.strip().lower()
-        if reg_type_norm not in valid_types:
-            continue
-        reg_type = reg_type_raw.strip()
         account_id = _cell(row, "account")
         account_number = _cell(row, "account_number")
         advisor_raw = _cell(row, "advisor")
@@ -651,6 +662,7 @@ def parse_registration_type_csv(csv_content: str) -> List[Dict[str, Any]]:
             "synthetic_id": synthetic_id_candidates[0],
             "synthetic_id_candidates": synthetic_id_candidates,
             "registration_type": reg_type,
+            "advisor_crd": crd or None,
             "advisor": advisor,
             "model": model,
             "firm": firm,
@@ -658,5 +670,8 @@ def parse_registration_type_csv(csv_content: str) -> List[Dict[str, Any]]:
             "last4": last4,
         })
 
-    logger.info("Registration type CSV: %s rows with valid registration_type", len(result))
+    logger.info(
+        "Registration type CSV: %s rows with registration type and/or Advisor CRD",
+        len(result),
+    )
     return result

@@ -271,6 +271,7 @@ class MonitoredAccount(Base):
     external_model_name = Column(String(255), nullable=True)  # Vendor model name (for discovery reporting)
     firm = Column(String(255), nullable=True)
     advisor = Column(String(255), nullable=True)
+    advisor_crd = Column(String(32), nullable=True)  # FINRA CRD from registration-type upload
     account_display = Column(String(255), nullable=True)  # Partial/masked account (e.g. ****5038)
     registration_type = Column(String(50), nullable=True)  # Retirement, Taxable, Trust
 

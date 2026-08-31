@@ -756,6 +756,25 @@ class TotalFirmYtdResponse(BaseModel):
     advisers_lost: List[str] = []
 
 
+class AdviserStrategyExportItem(BaseModel):
+    """One row in the monitoring adviser × strategy AUM export."""
+    crd: Optional[str] = None
+    adviser_name: str
+    total_aum_by_adviser: Decimal = Decimal("0")
+    strategy_name: str
+    aum_by_strategy: Decimal = Decimal("0")
+    ytd_aum_change: Decimal = Decimal("0")
+    account_count: int = 0
+
+
+class AdviserStrategyExportResponse(BaseModel):
+    """GET /api/monitoring/adviser-strategy-export."""
+    has_baseline: bool = False
+    baseline_date: Optional[date] = None
+    current_date: Optional[date] = None
+    rows: List[AdviserStrategyExportItem] = []
+
+
 # Ingest changes (prior vs current upload)
 class IngestChangeAccountItem(BaseModel):
     """Account in new/removed/material change list."""

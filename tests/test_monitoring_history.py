@@ -147,3 +147,42 @@ def test_get_ytd_baseline_date_falls_back_to_earliest_current_year_snapshot():
     db = _FakeYtdBaselineDb([None, date(2026, 1, 31)])
 
     assert monitoring._get_ytd_baseline_date(db, date(2026, 6, 22)) == date(2026, 1, 31)
+
+
+def test_merge_adviser_strategy_export_computes_ytd_and_adviser_totals():
+    current = {
+        ("Adviser A", "Growth"): {"account_count": 2, "aum": Decimal("300.00")},
+        ("Adviser A", "Income"): {"account_count": 1, "aum": Decimal("100.00")},
+        ("Adviser B", "Growth"): {"account_count": 1, "aum": Decimal("50.00")},
+    }
+    baseline = {
+        ("Adviser A", "Growth"): {"account_count": 1, "aum": Decimal("200.00")},
+        ("Adviser A", "Income"): {"account_count": 1, "aum": Decimal("80.00")},
+        ("Adviser A", "Legacy"): {"account_count": 1, "aum": Decimal("40.00")},
+    }
+    crd_by_adviser = {"Adviser A": "3095194"}
+
+    rows = monitoring._merge_adviser_strategy_export_rows(current, baseline, crd_by_adviser)
+    by_key = {(r.adviser_name, r.strategy_name): r for r in rows}
+
+    growth = by_key[("Adviser A", "Growth")]
+    assert growth.crd == "3095194"
+    assert growth.total_aum_by_adviser == Decimal("400.00")
+    assert growth.aum_by_strategy == Decimal("300.00")
+    assert growth.ytd_aum_change == Decimal("100.00")
+    assert growth.account_count == 2
+
+    income = by_key[("Adviser A", "Income")]
+    assert income.total_aum_by_adviser == Decimal("400.00")
+    assert income.ytd_aum_change == Decimal("20.00")
+
+    lost = by_key[("Adviser A", "Legacy")]
+    assert lost.aum_by_strategy == Decimal("0")
+    assert lost.ytd_aum_change == Decimal("-40.00")
+    assert lost.account_count == 0
+    assert lost.crd == "3095194"
+
+    other = by_key[("Adviser B", "Growth")]
+    assert other.crd is None
+    assert other.total_aum_by_adviser == Decimal("50.00")
+    assert other.ytd_aum_change == Decimal("50.00")

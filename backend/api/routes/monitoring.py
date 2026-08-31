@@ -65,6 +65,8 @@ from backend.api.models.schemas import (
     TotalFirmAccountItem,
     TotalFirmYtdResponse,
     TotalFirmYtdStrategyItem,
+    AdviserStrategyExportItem,
+    AdviserStrategyExportResponse,
     IngestChangesResponse,
     IngestChangeAccountItem,
     IngestChangeAdviserItem,
@@ -1197,6 +1199,103 @@ def _advisers_for_snapshot_date_sql(db: Session, snapshot_date: date) -> set:
     return {row[0] for row in rows if row[0]}
 
 
+def _adviser_name_for_export(advisor: Optional[str]) -> str:
+    return (advisor or "").strip() or "Unknown"
+
+
+def _strategy_name_for_export(external_model_name: Optional[str]) -> str:
+    return (external_model_name or "").strip() or "Unmapped"
+
+
+def _adviser_strategy_snapshot_aggregate_sql(
+    db: Session, snapshot_date: date
+) -> Dict[Tuple[str, str], Dict[str, Any]]:
+    """Aggregate account count and AUM by adviser × uploaded model for one snapshot date."""
+    adviser_expr = func.coalesce(func.nullif(func.trim(MonitoredAccount.advisor), ""), "Unknown")
+    strategy_expr = func.coalesce(
+        func.nullif(func.trim(MonitoredAccount.external_model_name), ""), "Unmapped"
+    )
+    rows = (
+        db.query(
+            adviser_expr,
+            strategy_expr,
+            func.count(AccountSnapshot.id),
+            func.coalesce(func.sum(AccountSnapshot.total_value), 0),
+        )
+        .select_from(AccountSnapshot)
+        .join(MonitoredAccount, AccountSnapshot.monitored_account_id == MonitoredAccount.id)
+        .filter(AccountSnapshot.as_of_date == snapshot_date)
+        .group_by(adviser_expr, strategy_expr)
+        .all()
+    )
+    out: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for adviser_name, strategy_name, account_count, aum in rows:
+        key = (
+            _adviser_name_for_export(adviser_name),
+            _strategy_name_for_export(strategy_name),
+        )
+        if key not in out:
+            out[key] = {"account_count": 0, "aum": Decimal("0")}
+        out[key]["account_count"] += account_count
+        out[key]["aum"] += Decimal(str(aum or 0))
+    return out
+
+
+def _crd_by_adviser_sql(db: Session) -> Dict[str, str]:
+    """Map trimmed adviser name to a non-blank advisor_crd."""
+    rows = (
+        db.query(MonitoredAccount.advisor, MonitoredAccount.advisor_crd)
+        .filter(
+            MonitoredAccount.advisor.isnot(None),
+            func.trim(MonitoredAccount.advisor) != "",
+            MonitoredAccount.advisor_crd.isnot(None),
+            func.trim(MonitoredAccount.advisor_crd) != "",
+        )
+        .all()
+    )
+    out: Dict[str, str] = {}
+    for advisor, crd in rows:
+        name = _adviser_name_for_export(advisor)
+        value = (crd or "").strip()
+        if name and value and name not in out:
+            out[name] = value
+    return out
+
+
+def _merge_adviser_strategy_export_rows(
+    current_by_key: Dict[Tuple[str, str], Dict[str, Any]],
+    baseline_by_key: Dict[Tuple[str, str], Dict[str, Any]],
+    crd_by_adviser: Dict[str, str],
+) -> List[AdviserStrategyExportItem]:
+    """Merge current vs YTD-baseline adviser×strategy aggregates into export rows."""
+    keys = set(current_by_key.keys()) | set(baseline_by_key.keys())
+    adviser_totals: Dict[str, Decimal] = {}
+    for (adviser, _strategy), vals in current_by_key.items():
+        adviser_totals[adviser] = adviser_totals.get(adviser, Decimal("0")) + Decimal(str(vals.get("aum") or 0))
+
+    rows: List[AdviserStrategyExportItem] = []
+    for adviser, strategy in keys:
+        current = current_by_key.get((adviser, strategy), {"account_count": 0, "aum": Decimal("0")})
+        baseline = baseline_by_key.get((adviser, strategy), {"account_count": 0, "aum": Decimal("0")})
+        current_aum = Decimal(str(current.get("aum") or 0))
+        start_aum = Decimal(str(baseline.get("aum") or 0))
+        rows.append(
+            AdviserStrategyExportItem(
+                crd=crd_by_adviser.get(adviser) or None,
+                adviser_name=adviser,
+                total_aum_by_adviser=adviser_totals.get(adviser, Decimal("0")),
+                strategy_name=strategy,
+                aum_by_strategy=current_aum,
+                ytd_aum_change=current_aum - start_aum,
+                account_count=int(current.get("account_count") or 0),
+            )
+        )
+    rows.sort(
+        key=lambda r: (-float(r.total_aum_by_adviser), r.adviser_name.lower(), r.strategy_name.lower())
+    )
+    return rows
+
+
 def _get_ytd_baseline_date(db: Session, current_date: date) -> Optional[date]:
     """Prefer prior year-end snapshot; fall back to earliest current-year snapshot."""
     year_start = date(current_date.year, 1, 1)
@@ -1270,6 +1369,31 @@ async def get_total_firm_ytd(
         strategies=strategies,
         advisers_won=sorted(current_advisers - baseline_advisers),
         advisers_lost=sorted(baseline_advisers - current_advisers),
+    )
+
+
+@router.get("/adviser-strategy-export", response_model=AdviserStrategyExportResponse)
+async def get_adviser_strategy_export(
+    as_of_date: Optional[date] = None,
+    db: Session = Depends(get_db),
+):
+    """One row per adviser × uploaded model: CRD, total AUM, strategy AUM, YTD AUM change, account count."""
+    current_date = as_of_date or _get_latest_snapshot_date(db)
+    if not current_date:
+        return AdviserStrategyExportResponse()
+
+    baseline_date = _get_ytd_baseline_date(db, current_date)
+    current_by_key = _adviser_strategy_snapshot_aggregate_sql(db, current_date)
+    baseline_by_key = (
+        _adviser_strategy_snapshot_aggregate_sql(db, baseline_date) if baseline_date else {}
+    )
+    crd_by_adviser = _crd_by_adviser_sql(db)
+    rows = _merge_adviser_strategy_export_rows(current_by_key, baseline_by_key, crd_by_adviser)
+    return AdviserStrategyExportResponse(
+        has_baseline=baseline_date is not None and bool(baseline_by_key or current_by_key),
+        baseline_date=baseline_date,
+        current_date=current_date,
+        rows=rows,
     )
 
 

@@ -13,6 +13,12 @@ import EquivalentReview from './monitoring/EquivalentReview';
 import AccountDrillDown from './monitoring/AccountDrillDown';
 import ConcentrationAccountList from './monitoring/ConcentrationAccountList';
 
+const toCsvCell = (value: unknown): string => {
+  const text = value == null ? '' : String(value);
+  const escaped = text.replace(/"/g, '""');
+  return /[",\n]/.test(escaped) ? `"${escaped}"` : escaped;
+};
+
 const MonitoringPage = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -63,6 +69,8 @@ const MonitoringPage = () => {
   const [searchResults, setSearchResults] = useState<Array<{ id: string; synthetic_id: string; friendly_name: string | null; advisor: string | null; account_display: string | null }>>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const handleAccountSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -89,6 +97,52 @@ const MonitoringPage = () => {
       setSearchError('Search failed');
     } finally {
       setSearchLoading(false);
+    }
+  };
+
+  const handleExportAdviserAum = async () => {
+    setExporting(true);
+    setExportError(null);
+    try {
+      const params = selectedAsOfDate ? { as_of_date: selectedAsOfDate } : undefined;
+      const res = await monitoringAPI.adviserStrategyExport(params);
+      const rows = res.data?.rows ?? [];
+      const csvRows = [
+        [
+          'CRD',
+          'Adviser Name',
+          'Total AUM by Adviser',
+          'Strategy',
+          'AUM by Strategy',
+          'YTD AUM Change by Strategy',
+          'Accounts in Strategy',
+        ],
+        ...rows.map((r) => [
+          r.crd ?? '',
+          r.adviser_name ?? '',
+          r.total_aum_by_adviser ?? 0,
+          r.strategy_name ?? '',
+          r.aum_by_strategy ?? 0,
+          r.ytd_aum_change ?? 0,
+          r.account_count ?? 0,
+        ]),
+      ];
+      const csvContent = `\uFEFF${csvRows.map((row) => row.map((c) => toCsvCell(c)).join(',')).join('\n')}`;
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const datePart = (res.data?.current_date || selectedAsOfDate || 'latest').replace(/[^\d-]/g, '');
+      a.download = `monitoring-adviser-aum-${datePart}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Failed to export adviser AUM:', err);
+      setExportError('Export failed');
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -296,6 +350,15 @@ const MonitoringPage = () => {
             <span className="text-xs text-gray-500">
               Reports, account values, holdings, and drill-downs use the selected snapshot date.
             </span>
+            <button
+              type="button"
+              onClick={handleExportAdviserAum}
+              disabled={exporting}
+              className="ml-auto inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {exporting ? 'Exporting…' : 'Export CSV'}
+            </button>
+            {exportError && <span className="text-xs text-red-600">{exportError}</span>}
           </div>
         )}
 

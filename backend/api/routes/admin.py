@@ -602,10 +602,12 @@ async def upload_registration_type(
     db: Session = Depends(get_db),
 ):
     """
-    Upload CSV with Registration Type (Retirement, Taxable, Trust) per account.
+    Upload CSV with Registration Type (Retirement, Taxable, Trust) per account and Advisor CRD.
     Matches by synthetic_id first; falls back to advisor + last4 of account + Product/Model.
-    Expected columns: Adviser, Account, Product (or Program/Model), Firm, Enterprise, Registration Type.
+    Expected columns: Adviser, Account, Product (or Program/Model), Firm, Enterprise,
+    Registration Type, Advisor CRD.
     Account Number (e.g. xxx-5290) used for fallback matching when Account format differs.
+    CRD is adviser-level: after matching, the same CRD is copied to every account with that adviser name.
     """
     body = await request.body()
     csv_content = body.decode("utf-8-sig").strip()
@@ -616,7 +618,7 @@ async def upload_registration_type(
         raise HTTPException(status_code=400, detail=str(e))
 
     if not rows:
-        return {"message": "No valid rows with Registration Type found", "updated_count": 0}
+        return {"message": "No valid rows with Registration Type or Advisor CRD found", "updated_count": 0}
 
     # Collect all synthetic_id candidates (parser may return ***** and **** variants)
     all_sids = set()
@@ -636,9 +638,12 @@ async def upload_registration_type(
             if acc:
                 break
         if acc:
-            acc.registration_type = r["registration_type"]
-            updated += 1
-        else:
+            if r.get("registration_type"):
+                acc.registration_type = r["registration_type"]
+                updated += 1
+            if r.get("advisor_crd"):
+                acc.advisor_crd = r["advisor_crd"]
+        elif r.get("registration_type"):
             unmatched.append(r)
 
     # Fallback: match by advisor + last4 + model when synthetic_id fails
@@ -650,9 +655,26 @@ async def upload_registration_type(
             for a in all_accounts:
                 if _account_matches_fallback(a, r["advisor"], r["model"], r["last4"]):
                     a.registration_type = r["registration_type"]
+                    if r.get("advisor_crd"):
+                        a.advisor_crd = r["advisor_crd"]
                     updated += 1
                     fallback_matched += 1
                     break
+
+    # Fan-out CRD to every account with the same adviser name (CRD is adviser-level).
+    crd_by_adviser: Dict[str, str] = {}
+    for r in rows:
+        crd = (r.get("advisor_crd") or "").strip()
+        advisor = (r.get("advisor") or "").strip()
+        if crd and advisor:
+            crd_by_adviser[advisor.lower()] = crd
+    crd_updated = 0
+    if crd_by_adviser:
+        for a in db.query(MonitoredAccount).filter(MonitoredAccount.advisor.isnot(None)).all():
+            key = (a.advisor or "").strip().lower()
+            if key in crd_by_adviser:
+                a.advisor_crd = crd_by_adviser[key]
+                crd_updated += 1
 
     try:
         db.commit()
@@ -661,9 +683,13 @@ async def upload_registration_type(
             "updated_count": updated,
             "file_row_count": len(rows),
         }
+        if crd_updated > 0:
+            resp["crd_updated_count"] = crd_updated
+            if updated == 0:
+                resp["message"] = f"Updated Advisor CRD on {crd_updated} account(s)"
         if fallback_matched > 0:
             resp["fallback_matched"] = fallback_matched
-        if updated == 0 and rows:
+        if updated == 0 and crd_updated == 0 and rows:
             # Diagnostics: compare file values to DB to find naming differences
             sample = rows[0]
             file_advisor = (sample.get("advisor") or "").strip().lower()

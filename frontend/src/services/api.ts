@@ -369,6 +369,21 @@ export const monitoringAPI = {
       accounts: Array<{ account_id: string; partial_account_number: string | null; account_value: number; has_equivalents: boolean; strategy_name: string | null; registration_type: string | null }>;
       legacy_totals: Array<{ legacy_ticker: string; total_value: number; account_count: number }>;
     }>('/api/monitoring/adviser-accounts', { params: { adviser, ...params } }),
+  adviserStrategyExport: (params?: { as_of_date?: string }) =>
+    api.get<{
+      has_baseline: boolean;
+      baseline_date: string | null;
+      current_date: string | null;
+      rows: Array<{
+        crd: string | null;
+        adviser_name: string;
+        total_aum_by_adviser: number;
+        strategy_name: string;
+        aum_by_strategy: number;
+        ytd_aum_change: number;
+        account_count: number;
+      }>;
+    }>('/api/monitoring/adviser-strategy-export', { params }),
   // Equivalent Review
   equivalentReview: (params?: { strategy_id?: string }) =>
     api.get<Array<{

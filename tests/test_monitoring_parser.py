@@ -5,6 +5,7 @@ import pytest
 from decimal import Decimal
 from backend.utils.csv_parser import (
     parse_aggregated_holdings_csv,
+    parse_registration_type_csv,
     _synthetic_id,
     _parse_aggregated_amount,
     _parse_as_of_date,
@@ -131,3 +132,38 @@ def test_market_value_without_ticker_is_rejected():
 ,1498.59,13532.47,****5038,Auour Instinct,Worthington,Cetera,Cetera,28-Jan-26"""
     with pytest.raises(ValueError, match="no Ticker"):
         parse_aggregated_holdings_csv(csv)
+
+
+def test_registration_type_parser_captures_advisor_crd():
+    """Advisor CRD is parsed without colliding with the Advisor name column."""
+    csv = """Advisor,Account,Product,Firm,Enterprise,Advisor CRD,Account Number,Registration Type
+Mark Feigenbaum,cetera-852590,Auour Instinct Global Equity Strategy,Cetera Wealth Services LLC,Cetera Investment Advisers LLC,3095194,xxxx-5177,Retirement
+"""
+    rows = parse_registration_type_csv(csv)
+    assert len(rows) == 1
+    assert rows[0]["advisor"] == "Feigenbaum, Mark"
+    assert rows[0]["advisor_crd"] == "3095194"
+    assert rows[0]["registration_type"] == "Retirement"
+
+
+def test_registration_type_parser_crd_column_does_not_steal_advisor_name():
+    """When Advisor CRD appears before Advisor, adviser name still maps to Advisor."""
+    csv = """Advisor CRD,Advisor,Account,Product,Firm,Enterprise,Account Number,Registration Type
+3095194,Mark Feigenbaum,cetera-852590,Auour Instinct Global Equity Strategy,Cetera Wealth Services LLC,Cetera Investment Advisers LLC,xxxx-5177,Retirement
+"""
+    rows = parse_registration_type_csv(csv)
+    assert len(rows) == 1
+    assert rows[0]["advisor"] == "Feigenbaum, Mark"
+    assert rows[0]["advisor_crd"] == "3095194"
+
+
+def test_registration_type_parser_keeps_crd_when_registration_type_blank():
+    """CRD-only rows are kept so adviser CRD is not dropped when registration type is empty."""
+    csv = """Advisor,Account,Product,Firm,Enterprise,Advisor CRD,Account Number,Registration Type
+Mark Feigenbaum,cetera-852590,Auour Instinct Global Equity Strategy,Cetera Wealth Services LLC,Cetera Investment Advisers LLC,3095194,xxxx-5177,
+"""
+    rows = parse_registration_type_csv(csv)
+    assert len(rows) == 1
+    assert rows[0]["advisor_crd"] == "3095194"
+    assert rows[0]["registration_type"] is None
+    assert rows[0]["advisor"] == "Feigenbaum, Mark"
