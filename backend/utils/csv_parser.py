@@ -222,21 +222,22 @@ def parse_product_equivalents_csv(csv_content: str) -> List[Dict[str, Any]]:
 
 
 def _parse_aggregated_amount(s: str) -> Decimal:
-    """Parse a non-negative monitoring amount; empty/N/A values are treated as 0."""
+    """Parse a signed monitoring amount; empty/N/A values are treated as 0.
+
+    Negative values are valid in custodial files (cash debits, short positions).
+    Accounting parentheses such as (758.23) are treated as negative.
+    """
     if not s or not isinstance(s, str):
         return Decimal("0")
     s = str(s).strip().replace(",", "").replace("$", "").strip()
     if not s or s.upper() in ("N/A", "NA", "-", "--", ""):
         return Decimal("0")
     if s.startswith("(") and s.endswith(")"):
-        raise ValueError(f"Negative monitoring amount is not allowed: {s}")
+        s = "-" + s[1:-1].strip()
     try:
-        amount = Decimal(s)
+        return Decimal(s)
     except Exception as exc:
         raise ValueError(f"Invalid monitoring amount: {s}") from exc
-    if amount < 0:
-        raise ValueError(f"Negative monitoring amount is not allowed: {s}")
-    return amount
 
 
 def _parse_as_of_date(s: str) -> Optional[datetime]:
@@ -457,12 +458,12 @@ def parse_aggregated_holdings_csv(csv_content: str) -> List[Dict[str, Any]]:
         for r in group:
             ticker = (r.get("ticker") or "").strip()
             val = _parse_aggregated_amount(r.get("market_val_str") or "0")
-            if not ticker and val > 0:
+            if not ticker and val != 0:
                 raise ValueError(
                     f"Monitoring CSV row for account {account_display} / model {external_model_name} "
                     "has Market Value but no Ticker."
                 )
-            if ticker and val > 0:
+            if ticker and val != 0:
                 holdings.append({"ticker": ticker, "value": val})
         sum_market_val = sum(h["value"] for h in holdings)
         total_value = sum_market_val + cash_value

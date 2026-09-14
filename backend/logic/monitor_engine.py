@@ -5,17 +5,66 @@ No DB dependency; accepts pre-loaded strategy positions and product equivalents.
 """
 import logging
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 PRECISION = Decimal("0.001")
+# Match account_snapshot_holdings.weight_pct NUMERIC(6, 3)
+WEIGHT_PCT_ABS_MAX = Decimal("999.999")
+# Match account_snapshots.cash_pct / purity_score NUMERIC(5, 2)
+SNAPSHOT_PCT_ABS_MAX = Decimal("999.99")
+# Match account_snapshots.total_deviation_score NUMERIC(10, 3)
+DEVIATION_SCORE_ABS_MAX = Decimal("9999999.999")
 
 
 def round_to_precision(value: Decimal) -> Decimal:
     if not isinstance(value, Decimal):
         value = Decimal(str(value))
     return value.quantize(PRECISION, rounding=ROUND_HALF_UP)
+
+
+def clamp_decimal(value: Optional[Decimal], abs_max: Decimal) -> Optional[Decimal]:
+    """Keep a value inside +/- abs_max so it fits a fixed NUMERIC column."""
+    if value is None:
+        return None
+    if not isinstance(value, Decimal):
+        value = Decimal(str(value))
+    if value > abs_max:
+        return abs_max
+    if value < -abs_max:
+        return -abs_max
+    return value
+
+
+def clamp_weight_pct(value: Optional[Decimal]) -> Optional[Decimal]:
+    return clamp_decimal(value, WEIGHT_PCT_ABS_MAX)
+
+
+def clamp_snapshot_pct(value: Optional[Decimal]) -> Optional[Decimal]:
+    return clamp_decimal(value, SNAPSHOT_PCT_ABS_MAX)
+
+
+def clamp_deviation_score(value: Optional[Decimal]) -> Optional[Decimal]:
+    return clamp_decimal(value, DEVIATION_SCORE_ABS_MAX)
+
+
+def cash_pct_for_snapshot(cash_value: Decimal, total_value: Decimal) -> Optional[Decimal]:
+    """Cash as % of account value, clamped to cash_pct column limits."""
+    if total_value == 0:
+        return None
+    raw = round(Decimal(str(cash_value)) / Decimal(str(total_value)) * Decimal("100"), 2)
+    return clamp_snapshot_pct(raw)
+
+
+def _weight_pct(part: Decimal, total: Decimal) -> Optional[Decimal]:
+    if total == 0:
+        return None
+    return clamp_weight_pct(round_to_precision((part / total) * Decimal("100")))
+
+
+def _optional_float(value: Optional[Decimal]) -> Optional[float]:
+    return float(value) if value is not None else None
 
 
 def _build_pe_map(
@@ -78,8 +127,6 @@ def compute_rollup_and_scores(
         where holdings_with_metadata = [{ticker, value, asset_class, grade, weight_pct}]
     """
     total_value = sum(Decimal(str(h.get("value", 0))) for h in holdings) + Decimal(str(cash_value))
-    if total_value <= 0:
-        return {}, Decimal("0"), Decimal("0"), []
 
     pe_map = _build_pe_map(product_equivalents)
     model_to_ac, target_by_ac = _build_positions_map(positions)
@@ -91,7 +138,7 @@ def compute_rollup_and_scores(
     for h in holdings:
         ticker = (h.get("ticker") or "").strip()
         value = Decimal(str(h.get("value", 0)))
-        if value <= 0:
+        if value == 0:
             continue
         model_ticker, grade = pe_map.get(ticker.lower(), (None, 2))
         asset_class = None
@@ -108,45 +155,46 @@ def compute_rollup_and_scores(
         value_by_ac[asset_class] += value
         if grade == 0:
             grade0_value += value
-        weight_pct = round_to_precision((value / total_value) * Decimal("100")) if total_value else Decimal("0")
         holdings_with_metadata.append({
             "ticker": ticker,
             "value": value,
             "asset_class": asset_class,
             "grade": grade,
-            "weight_pct": float(weight_pct),
+            "weight_pct": _optional_float(_weight_pct(value, total_value)),
         })
 
-    if cash_value > 0:
+    if cash_value != 0:
         cash_ac = "Cash"
         if cash_ac not in value_by_ac:
             value_by_ac[cash_ac] = Decimal("0")
         value_by_ac[cash_ac] += cash_value
-        weight_pct_cash = round_to_precision((cash_value / total_value) * Decimal("100"))
         holdings_with_metadata.append({
             "ticker": "CASH",
             "value": cash_value,
             "asset_class": cash_ac,
             "grade": 0,
-            "weight_pct": float(weight_pct_cash),
+            "weight_pct": _optional_float(_weight_pct(cash_value, total_value)),
         })
 
     actual_pct_by_ac: Dict[str, Decimal] = {}
-    for ac, val in value_by_ac.items():
-        actual_pct_by_ac[ac] = round_to_precision((val / total_value) * Decimal("100"))
+    if total_value != 0:
+        for ac, val in value_by_ac.items():
+            actual_pct_by_ac[ac] = round_to_precision((val / total_value) * Decimal("100"))
 
     # Sum |actual_pct - target_pct| over all asset classes (actual and target) so missing targets count.
-    all_asset_classes = set(actual_pct_by_ac.keys()) | set(target_by_ac.keys())
+    # Percentages are undefined at zero net, so scores stay 0 while holdings are still returned.
     deviation_score = Decimal("0")
-    for ac in all_asset_classes:
-        actual_pct = actual_pct_by_ac.get(ac, Decimal("0"))
-        target_pct = target_by_ac.get(ac, Decimal("0"))
-        drift = actual_pct - target_pct
-        deviation_score += abs(drift)
-    deviation_score = round_to_precision(deviation_score)
-
-    purity_score = (grade0_value / total_value * Decimal("100")) if total_value else Decimal("0")
-    purity_score = round_to_precision(purity_score)
+    purity_score = Decimal("0")
+    if total_value != 0:
+        all_asset_classes = set(actual_pct_by_ac.keys()) | set(target_by_ac.keys())
+        for ac in all_asset_classes:
+            actual_pct = actual_pct_by_ac.get(ac, Decimal("0"))
+            target_pct = target_by_ac.get(ac, Decimal("0"))
+            deviation_score += abs(actual_pct - target_pct)
+        deviation_score = clamp_deviation_score(round_to_precision(deviation_score)) or Decimal("0")
+        purity_score = clamp_snapshot_pct(
+            round_to_precision(grade0_value / total_value * Decimal("100"))
+        ) or Decimal("0")
 
     return actual_pct_by_ac, deviation_score, purity_score, holdings_with_metadata
 

@@ -79,6 +79,8 @@ from backend.services.alphavantage_service import compute_metrics
 from backend.logic.monitor_engine import (
     compute_rollup_and_scores,
     get_allocations_breakdown,
+    cash_pct_for_snapshot,
+    clamp_weight_pct,
 )
 
 logger = logging.getLogger(__name__)
@@ -446,7 +448,7 @@ async def ingest_aggregated_holdings(
                 product_equivalents=pe_data,
             )
             total_val = Decimal(str(g["total_value"]))
-            cash_pct = round(Decimal(str(g.get("cash_value", 0))) / total_val * Decimal("100"), 2) if total_val else None
+            cash_pct = cash_pct_for_snapshot(Decimal(str(g.get("cash_value", 0))), total_val)
 
             snapshot = db.query(AccountSnapshot).filter(
                 AccountSnapshot.monitored_account_id == account.id,
@@ -481,7 +483,11 @@ async def ingest_aggregated_holdings(
                     "ticker": h.get("ticker", ""),
                     "asset_class": h.get("asset_class"),
                     "value": Decimal(str(h.get("value", 0))),
-                    "weight_pct": Decimal(str(h.get("weight_pct", 0))) if h.get("weight_pct") is not None else None,
+                    "weight_pct": (
+                        clamp_weight_pct(Decimal(str(h.get("weight_pct"))))
+                        if h.get("weight_pct") is not None
+                        else None
+                    ),
                     "grade": h.get("grade"),
                 })
         else:
@@ -517,14 +523,18 @@ async def ingest_aggregated_holdings(
             total_val = Decimal(str(g["total_value"]))
             raw_holdings = list(g.get("holdings") or [])
             cash_val = Decimal(str(g.get("cash_value", 0)))
-            if cash_val and cash_val > 0:
+            if cash_val != 0:
                 raw_holdings.append({"ticker": "CASH", "value": float(cash_val)})
             for h in raw_holdings:
                 ticker = (h.get("ticker") or "").strip()
                 val = Decimal(str(h.get("value", 0)))
                 if not ticker:
                     continue
-                weight_pct = round(val / total_val * Decimal("100"), 3) if total_val else None
+                weight_pct = (
+                    clamp_weight_pct(round(val / total_val * Decimal("100"), 3))
+                    if total_val != 0
+                    else None
+                )
                 holding_rows.append({
                     "id": uuid.uuid4(),
                     "account_snapshot_id": snapshot.id,
@@ -589,7 +599,7 @@ def _recalc_one_snapshot(
         positions=positions_data,
         product_equivalents=pe_data,
     )
-    cash_pct = round(cash_value / total_value * Decimal("100"), 2) if total_value else None
+    cash_pct = cash_pct_for_snapshot(cash_value, total_value)
     return snap_id, deviation_score, purity_score, cash_pct, holdings_with_meta
 
 
@@ -733,7 +743,11 @@ async def recalculate_monitoring(
                     "ticker": h.get("ticker", ""),
                     "asset_class": h.get("asset_class"),
                     "value": Decimal(str(h.get("value", 0))),
-                    "weight_pct": Decimal(str(h.get("weight_pct", 0))) if h.get("weight_pct") is not None else None,
+                    "weight_pct": (
+                        clamp_weight_pct(Decimal(str(h.get("weight_pct"))))
+                        if h.get("weight_pct") is not None
+                        else None
+                    ),
                     "grade": h.get("grade"),
                 })
             recalculated_count += 1

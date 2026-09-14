@@ -7,6 +7,12 @@ from backend.logic.monitor_engine import (
     compute_rollup_and_scores,
     get_allocations_breakdown,
     round_to_precision,
+    clamp_decimal,
+    clamp_weight_pct,
+    clamp_snapshot_pct,
+    cash_pct_for_snapshot,
+    WEIGHT_PCT_ABS_MAX,
+    SNAPSHOT_PCT_ABS_MAX,
 )
 
 
@@ -87,6 +93,103 @@ def test_purity_score_grade0():
     )
     # 60k grade 0, 40k grade 1, total 100k -> purity 60%
     assert purity_score == Decimal("60.000")
+
+
+def test_negative_cash_is_included_in_rollup():
+    """Debit cash reduces total value and appears as a negative Cash weight."""
+    holdings = [{"ticker": "WFMIX", "value": Decimal("10000")}]
+    cash_value = Decimal("-758.23")
+    positions = [
+        {"model_ticker": "SPYM", "asset_class": "US Large Core", "target_allocation": 100},
+    ]
+    product_equivalents = [{"legacy_ticker": "WFMIX", "model_ticker": "SPYM", "grade": 0}]
+    actual_by_ac, _, _, holdings_meta = compute_rollup_and_scores(
+        holdings=holdings,
+        cash_value=cash_value,
+        positions=positions,
+        product_equivalents=product_equivalents,
+    )
+    total = Decimal("10000") + Decimal("-758.23")
+    assert "Cash" in actual_by_ac
+    assert actual_by_ac["Cash"] == round_to_precision(Decimal("-758.23") / total * 100)
+    cash_row = next(h for h in holdings_meta if h["ticker"] == "CASH")
+    assert cash_row["value"] == Decimal("-758.23")
+
+
+def test_zero_net_keeps_holdings():
+    """A cash debit that nets the account to zero still persists holdings."""
+    holdings = [{"ticker": "WFMIX", "value": Decimal("1000")}]
+    cash_value = Decimal("-1000")
+    positions = [
+        {"model_ticker": "SPYM", "asset_class": "US Large Core", "target_allocation": 100},
+    ]
+    product_equivalents = [{"legacy_ticker": "WFMIX", "model_ticker": "SPYM", "grade": 0}]
+    actual_by_ac, deviation_score, purity_score, holdings_meta = compute_rollup_and_scores(
+        holdings=holdings,
+        cash_value=cash_value,
+        positions=positions,
+        product_equivalents=product_equivalents,
+    )
+    tickers = {h["ticker"] for h in holdings_meta}
+    assert tickers == {"WFMIX", "CASH"}
+    assert all(h["weight_pct"] is None for h in holdings_meta)
+    assert actual_by_ac == {}
+    assert deviation_score == Decimal("0")
+    assert purity_score == Decimal("0")
+
+
+def test_negative_net_keeps_holdings():
+    """A cash debit larger than market value still returns holdings and cash."""
+    holdings = [{"ticker": "WFMIX", "value": Decimal("1000")}]
+    cash_value = Decimal("-2000")
+    positions = [
+        {"model_ticker": "SPYM", "asset_class": "US Large Core", "target_allocation": 100},
+    ]
+    product_equivalents = [{"legacy_ticker": "WFMIX", "model_ticker": "SPYM", "grade": 0}]
+    _, _, _, holdings_meta = compute_rollup_and_scores(
+        holdings=holdings,
+        cash_value=cash_value,
+        positions=positions,
+        product_equivalents=product_equivalents,
+    )
+    by_ticker = {h["ticker"]: h for h in holdings_meta}
+    assert by_ticker["WFMIX"]["value"] == Decimal("1000")
+    assert by_ticker["CASH"]["value"] == Decimal("-2000")
+    assert by_ticker["WFMIX"]["weight_pct"] == -100.0
+    assert by_ticker["CASH"]["weight_pct"] == 200.0
+
+
+def test_weight_pct_clamped_when_net_is_tiny():
+    """Inflated weights from a tiny positive net fit NUMERIC(6, 3)."""
+    holdings = [{"ticker": "WFMIX", "value": Decimal("10000")}]
+    cash_value = Decimal("-9999.50")
+    positions = [
+        {"model_ticker": "SPYM", "asset_class": "US Large Core", "target_allocation": 100},
+    ]
+    product_equivalents = [{"legacy_ticker": "WFMIX", "model_ticker": "SPYM", "grade": 0}]
+    _, _, purity_score, holdings_meta = compute_rollup_and_scores(
+        holdings=holdings,
+        cash_value=cash_value,
+        positions=positions,
+        product_equivalents=product_equivalents,
+    )
+    wfmix = next(h for h in holdings_meta if h["ticker"] == "WFMIX")
+    cash = next(h for h in holdings_meta if h["ticker"] == "CASH")
+    assert Decimal(str(wfmix["weight_pct"])) == WEIGHT_PCT_ABS_MAX
+    assert Decimal(str(cash["weight_pct"])) == -WEIGHT_PCT_ABS_MAX
+    assert purity_score == SNAPSHOT_PCT_ABS_MAX
+
+
+def test_cash_pct_for_snapshot_clamps_and_skips_zero_total():
+    assert cash_pct_for_snapshot(Decimal("-758.23"), Decimal("10000")) == Decimal("-7.58")
+    assert cash_pct_for_snapshot(Decimal("-9999.50"), Decimal("0.50")) == -SNAPSHOT_PCT_ABS_MAX
+    assert cash_pct_for_snapshot(Decimal("-1000"), Decimal("0")) is None
+
+
+def test_clamp_decimal_caps_both_sides():
+    assert clamp_weight_pct(Decimal("2000000")) == WEIGHT_PCT_ABS_MAX
+    assert clamp_snapshot_pct(Decimal("-2000000")) == -SNAPSHOT_PCT_ABS_MAX
+    assert clamp_decimal(None, Decimal("1")) is None
 
 
 def test_get_allocations_breakdown():

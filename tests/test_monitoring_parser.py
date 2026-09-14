@@ -23,15 +23,13 @@ def test_synthetic_id_deterministic():
 
 
 def test_parse_aggregated_amount():
-    """Numeric parsing: commas stripped."""
+    """Numeric parsing: commas stripped; signed cash/market values allowed."""
     assert _parse_aggregated_amount("1,498.59") == Decimal("1498.59")
     assert _parse_aggregated_amount("16,422.32") == Decimal("16422.32")
     assert _parse_aggregated_amount("") == Decimal("0")
     assert _parse_aggregated_amount("N/A") == Decimal("0")
-    with pytest.raises(ValueError, match="Negative monitoring amount"):
-        _parse_aggregated_amount("-1.00")
-    with pytest.raises(ValueError, match="Negative monitoring amount"):
-        _parse_aggregated_amount("(1.00)")
+    assert _parse_aggregated_amount("-758.23") == Decimal("-758.23")
+    assert _parse_aggregated_amount("(758.23)") == Decimal("-758.23")
     with pytest.raises(ValueError, match="Invalid monitoring amount"):
         _parse_aggregated_amount("not-a-number")
 
@@ -118,12 +116,25 @@ WFMIX,1498.59,13532.47,****5038,,Worthington,Cetera,Cetera,28-Jan-26"""
         parse_aggregated_holdings_csv(csv)
 
 
-def test_negative_market_value_is_rejected():
-    """Monitoring uploads should never contain negative positions."""
+def test_negative_cash_is_included_in_total():
+    """Cash As Position can be a debit; it nets against market value in account total."""
+    csv = """Ticker,Market Val,Cash As Position,Account,Model,Advisor,Firm,Enterprise,As Of Date
+WFMIX,1498.59,-758.23,****5038,Auour Instinct,Worthington,Cetera,Cetera,28-Jan-26"""
+    groups = parse_aggregated_holdings_csv(csv)
+    assert len(groups) == 1
+    assert groups[0]["cash_value"] == Decimal("-758.23")
+    assert groups[0]["total_value"] == Decimal("1498.59") + Decimal("-758.23")
+    assert groups[0]["holdings"][0]["value"] == Decimal("1498.59")
+
+
+def test_negative_market_value_is_included():
+    """Short/debit positions are kept in holdings and totals."""
     csv = """Ticker,Market Val,Cash As Position,Account,Model,Advisor,Firm,Enterprise,As Of Date
 WFMIX,-1498.59,13532.47,****5038,Auour Instinct,Worthington,Cetera,Cetera,28-Jan-26"""
-    with pytest.raises(ValueError, match="Negative monitoring amount"):
-        parse_aggregated_holdings_csv(csv)
+    groups = parse_aggregated_holdings_csv(csv)
+    assert len(groups) == 1
+    assert groups[0]["holdings"][0]["value"] == Decimal("-1498.59")
+    assert groups[0]["total_value"] == Decimal("-1498.59") + Decimal("13532.47")
 
 
 def test_market_value_without_ticker_is_rejected():
