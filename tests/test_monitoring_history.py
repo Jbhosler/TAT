@@ -186,3 +186,114 @@ def test_merge_adviser_strategy_export_computes_ytd_and_adviser_totals():
     assert other.crd is None
     assert other.total_aum_by_adviser == Decimal("50.00")
     assert other.ytd_aum_change == Decimal("50.00")
+
+
+def test_export_strategy_column_maps_uploaded_model_names():
+    assert monitoring._export_strategy_column("Auour Instinct Global Equity Strategy") == "global_equity"
+    assert monitoring._export_strategy_column("Auour Instinct Global Balanced Strategy") == "global_balanced"
+    assert monitoring._export_strategy_column("Auour Instinct Global Fixed Income Strategy") == "global_fixed_income"
+    assert monitoring._export_strategy_column("Auour Ultra Low Duration Strategy") == "uld"
+    assert monitoring._export_strategy_column("ULD") == "uld"
+    assert monitoring._export_strategy_column("Auour Instinct Global Multi-Asset Income Strategy") == "multi_asset_income"
+    assert monitoring._export_strategy_column("Unmapped") is None
+
+
+def test_format_export_dollars_uses_accounting_format():
+    assert monitoring._format_export_dollars(Decimal("61059800.62")) == "$61,059,800.62"
+    assert monitoring._format_export_dollars(Decimal("-11722215.29")) == "($11,722,215.29)"
+    assert monitoring._format_export_dollars(Decimal("0")) == "$ -"
+    assert monitoring._format_export_dollars(Decimal("1362553.90")) == "$1,362,553.90"
+
+
+def test_adviser_aum_export_table_is_one_row_per_adviser():
+    from backend.api.models.schemas import AdviserStrategyExportItem
+
+    def row(crd, adviser, total, strategy, aum, ytd, accounts):
+        return AdviserStrategyExportItem(
+            crd=crd,
+            adviser_name=adviser,
+            total_aum_by_adviser=Decimal(total),
+            strategy_name=strategy,
+            aum_by_strategy=Decimal(aum),
+            ytd_aum_change=Decimal(ytd),
+            account_count=accounts,
+        )
+
+    long_rows = [
+        row("1893929", "Howell, Richard", "10705402.74", "Auour Instinct Global Equity Strategy", "1221724.71", "100.00", 9),
+        row("1893929", "Howell, Richard", "10705402.74", "Auour Instinct Global Balanced Strategy", "6589945.09", "200.00", 43),
+        row("1893929", "Howell, Richard", "10705402.74", "Auour Instinct Global Fixed Income Strategy", "931807.89", "300.00", 7),
+        row("1893929", "Howell, Richard", "10705402.74", "Auour Ultra Low Duration Strategy", "414923.20", "400.00", 4),
+        row("1893929", "Howell, Richard", "10705402.74", "Auour Instinct Global Multi-Asset Income Strategy", "1547001.85", "1361553.90", 17),
+        row("4280808", "MACKEN ELLIOTT, Martha", "61059800.62", "Auour Instinct Global Balanced Strategy", "61059800.62", "-11722215.29", 228),
+        row(None, "Small Book", "10.00", "Custom Sleeve", "10.00", "10.00", 1),
+    ]
+
+    columns, rows = monitoring._adviser_aum_export_table(long_rows)
+
+    assert columns[:15] == [
+        "CRD",
+        "Adviser Name",
+        "Total AUM by Adviser",
+        "Total Accounts",
+        "Total YTD AUM Change",
+        "Global Equity $",
+        "Global Equity Accounts",
+        "Global Balanced $",
+        "Global Balanced Accounts",
+        "Global Fixed Income $",
+        "Global Fixed Income Accounts",
+        "ULD $",
+        "ULD Accounts",
+        "Multi-Asset Income $",
+        "Multi-Asset Income Accounts",
+    ]
+    assert columns[-2:] == ["Custom Sleeve $", "Custom Sleeve Accounts"]
+
+    by_name = {row[1]: row for row in rows}
+    assert [row[1] for row in rows] == ["MACKEN ELLIOTT, Martha", "Howell, Richard", "Small Book"]
+
+    martha = by_name["MACKEN ELLIOTT, Martha"]
+    assert martha[:15] == [
+        "4280808",
+        "MACKEN ELLIOTT, Martha",
+        "$61,059,800.62",
+        "228",
+        "($11,722,215.29)",
+        "$ -",
+        "0",
+        "$61,059,800.62",
+        "228",
+        "$ -",
+        "0",
+        "$ -",
+        "0",
+        "$ -",
+        "0",
+    ]
+    assert martha[-2:] == ["$ -", "0"]
+
+    howell = by_name["Howell, Richard"]
+    assert howell[:15] == [
+        "1893929",
+        "Howell, Richard",
+        "$10,705,402.74",
+        "80",
+        "$1,362,553.90",
+        "$1,221,724.71",
+        "9",
+        "$6,589,945.09",
+        "43",
+        "$931,807.89",
+        "7",
+        "$414,923.20",
+        "4",
+        "$1,547,001.85",
+        "17",
+    ]
+
+    other = by_name["Small Book"]
+    assert other[2] == "$10.00"
+    assert other[3] == "1"
+    assert other[5] == "$ -"
+    assert other[-2:] == ["$10.00", "1"]

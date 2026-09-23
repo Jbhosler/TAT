@@ -7,6 +7,7 @@ import { monitoringAPI } from '../services/api';
 import TotalFirm from './monitoring/TotalFirm';
 import ConcentrationReport from './monitoring/ConcentrationReport';
 import AccountDetailsByAdviser from './monitoring/AccountDetailsByAdviser';
+import AdviserInfo from './monitoring/AdviserInfo';
 import UploadChanges from './monitoring/UploadChanges';
 import UnusedEquivalents from './monitoring/UnusedEquivalents';
 import EquivalentReview from './monitoring/EquivalentReview';
@@ -106,27 +107,9 @@ const MonitoringPage = () => {
     try {
       const params = selectedAsOfDate ? { as_of_date: selectedAsOfDate } : undefined;
       const res = await monitoringAPI.adviserStrategyExport(params);
-      const rows = res.data?.rows ?? [];
-      const csvRows = [
-        [
-          'CRD',
-          'Adviser Name',
-          'Total AUM by Adviser',
-          'Strategy',
-          'AUM by Strategy',
-          'YTD AUM Change by Strategy',
-          'Accounts in Strategy',
-        ],
-        ...rows.map((r) => [
-          r.crd ?? '',
-          r.adviser_name ?? '',
-          r.total_aum_by_adviser ?? 0,
-          r.strategy_name ?? '',
-          r.aum_by_strategy ?? 0,
-          r.ytd_aum_change ?? 0,
-          r.account_count ?? 0,
-        ]),
-      ];
+      const columns = res.data?.columns ?? [];
+      const dataRows = res.data?.rows ?? [];
+      const csvRows = [columns, ...dataRows];
       const csvContent = `\uFEFF${csvRows.map((row) => row.map((c) => toCsvCell(c)).join(',')).join('\n')}`;
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
@@ -255,7 +238,7 @@ const MonitoringPage = () => {
 
       <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
         <div className="border-b border-gray-200 mb-6">
-          <nav className="-mb-px flex space-x-8">
+          <nav className="-mb-px flex space-x-8 overflow-x-auto">
             <button
               onClick={() => setActiveTab('totalfirm')}
               className={`${
@@ -295,6 +278,16 @@ const MonitoringPage = () => {
               } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
             >
               By Adviser
+            </button>
+            <button
+              onClick={() => setActiveTab('adviserinfo')}
+              className={`${
+                activeTab === 'adviserinfo'
+                  ? 'border-indigo-500 text-indigo-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
+            >
+              Adviser Info
             </button>
             <button
               onClick={() => setActiveTab('uploadchanges')}
@@ -367,6 +360,7 @@ const MonitoringPage = () => {
           {activeTab === 'heatmap' && <HeatMap asOfDate={selectedAsOfDate} />}
           {activeTab === 'concentration' && <ConcentrationReport asOfDate={selectedAsOfDate} />}
           {activeTab === 'byadviser' && <AccountDetailsByAdviser />}
+          {activeTab === 'adviserinfo' && <AdviserInfo asOfDate={selectedAsOfDate} />}
           {activeTab === 'uploadchanges' && <UploadChanges snapshotDates={snapshotDates} />}
           {activeTab === 'unusedequivalents' && <UnusedEquivalents asOfDate={selectedAsOfDate} />}
           {activeTab === 'equivalentreview' && <EquivalentReview />}

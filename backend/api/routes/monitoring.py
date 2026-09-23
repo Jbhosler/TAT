@@ -67,6 +67,10 @@ from backend.api.models.schemas import (
     TotalFirmYtdStrategyItem,
     AdviserStrategyExportItem,
     AdviserStrategyExportResponse,
+    AdviserInfoItem,
+    AdviserInfoResponse,
+    AdviserCrdUpdateRequest,
+    AdviserCrdUpdateResponse,
     IngestChangesResponse,
     IngestChangeAccountItem,
     IngestChangeAdviserItem,
@@ -1221,6 +1225,60 @@ def _strategy_name_for_export(external_model_name: Optional[str]) -> str:
     return (external_model_name or "").strip() or "Unmapped"
 
 
+# Wide export columns, in file order. Uploaded model names are folded into these.
+_ADVISER_AUM_EXPORT_COLUMNS = [
+    "CRD",
+    "Adviser Name",
+    "Total AUM by Adviser",
+    "Total Accounts",
+    "Total YTD AUM Change",
+    "Global Equity $",
+    "Global Equity Accounts",
+    "Global Balanced $",
+    "Global Balanced Accounts",
+    "Global Fixed Income $",
+    "Global Fixed Income Accounts",
+    "ULD $",
+    "ULD Accounts",
+    "Multi-Asset Income $",
+    "Multi-Asset Income Accounts",
+]
+
+_EXPORT_STRATEGY_COLUMN_KEYS = (
+    "global_equity",
+    "global_balanced",
+    "global_fixed_income",
+    "uld",
+    "multi_asset_income",
+)
+
+
+def _export_strategy_column(strategy_name: Optional[str]) -> Optional[str]:
+    """Map an uploaded model name onto a wide-export strategy column."""
+    name = (strategy_name or "").strip().lower()
+    if "multi-asset" in name or "multi asset" in name:
+        return "multi_asset_income"
+    padded = f" {name} "
+    if "ultra low duration" in name or " uld " in padded:
+        return "uld"
+    if "fixed income" in name:
+        return "global_fixed_income"
+    if "balanced" in name:
+        return "global_balanced"
+    if "equity" in name:
+        return "global_equity"
+    return None
+
+
+def _format_export_dollars(value: Decimal) -> str:
+    """Accounting format used by the adviser AUM export."""
+    amount = Decimal(str(value or 0)).quantize(Decimal("0.01"))
+    if amount == 0:
+        return "$ -"
+    text = f"{abs(amount):,.2f}"
+    return f"(${text})" if amount < 0 else f"${text}"
+
+
 def _adviser_strategy_snapshot_aggregate_sql(
     db: Session, snapshot_date: date
 ) -> Dict[Tuple[str, str], Dict[str, Any]]:
@@ -1306,6 +1364,88 @@ def _merge_adviser_strategy_export_rows(
     return rows
 
 
+def _adviser_aum_export_table(
+    long_rows: List[AdviserStrategyExportItem],
+) -> Tuple[List[str], List[List[str]]]:
+    """Pivot adviser × strategy rows into one accounting-formatted row per adviser."""
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for row in long_rows:
+        adviser = row.adviser_name
+        if adviser not in grouped:
+            grouped[adviser] = {
+                "crd": row.crd,
+                "total_aum": Decimal("0"),
+                "total_accounts": 0,
+                "total_ytd": Decimal("0"),
+                "strategies": {
+                    key: {"aum": Decimal("0"), "account_count": 0}
+                    for key in _EXPORT_STRATEGY_COLUMN_KEYS
+                },
+                "other": {},
+            }
+        bucket = grouped[adviser]
+        if not bucket["crd"] and row.crd:
+            bucket["crd"] = row.crd
+        bucket["total_aum"] = max(
+            bucket["total_aum"],
+            Decimal(str(row.total_aum_by_adviser or 0)),
+        )
+        aum = Decimal(str(row.aum_by_strategy or 0))
+        accounts = int(row.account_count or 0)
+        bucket["total_accounts"] += accounts
+        bucket["total_ytd"] += Decimal(str(row.ytd_aum_change or 0))
+        column = _export_strategy_column(row.strategy_name)
+        if column:
+            bucket["strategies"][column]["aum"] += aum
+            bucket["strategies"][column]["account_count"] += accounts
+        elif aum != 0 or accounts != 0:
+            other = bucket["other"].setdefault(
+                row.strategy_name,
+                {"aum": Decimal("0"), "account_count": 0},
+            )
+            other["aum"] += aum
+            other["account_count"] += accounts
+
+    other_names = sorted(
+        {name for bucket in grouped.values() for name in bucket["other"]},
+        key=str.lower,
+    )
+    columns = list(_ADVISER_AUM_EXPORT_COLUMNS)
+    for name in other_names:
+        columns.extend([f"{name} $", f"{name} Accounts"])
+
+    ordered = sorted(
+        grouped.items(),
+        key=lambda item: (-float(item[1]["total_aum"]), item[0].lower()),
+    )
+    table_rows: List[List[str]] = []
+    for adviser, bucket in ordered:
+        strategies = bucket["strategies"]
+        cells = [
+            bucket["crd"] or "",
+            adviser,
+            _format_export_dollars(bucket["total_aum"]),
+            str(bucket["total_accounts"]),
+            _format_export_dollars(bucket["total_ytd"]),
+            _format_export_dollars(strategies["global_equity"]["aum"]),
+            str(strategies["global_equity"]["account_count"]),
+            _format_export_dollars(strategies["global_balanced"]["aum"]),
+            str(strategies["global_balanced"]["account_count"]),
+            _format_export_dollars(strategies["global_fixed_income"]["aum"]),
+            str(strategies["global_fixed_income"]["account_count"]),
+            _format_export_dollars(strategies["uld"]["aum"]),
+            str(strategies["uld"]["account_count"]),
+            _format_export_dollars(strategies["multi_asset_income"]["aum"]),
+            str(strategies["multi_asset_income"]["account_count"]),
+        ]
+        for name in other_names:
+            other = bucket["other"].get(name, {"aum": Decimal("0"), "account_count": 0})
+            cells.append(_format_export_dollars(other["aum"]))
+            cells.append(str(other["account_count"]))
+        table_rows.append(cells)
+    return columns, table_rows
+
+
 def _get_ytd_baseline_date(db: Session, current_date: date) -> Optional[date]:
     """Prefer prior year-end snapshot; fall back to earliest current-year snapshot."""
     year_start = date(current_date.year, 1, 1)
@@ -1387,10 +1527,10 @@ async def get_adviser_strategy_export(
     as_of_date: Optional[date] = None,
     db: Session = Depends(get_db),
 ):
-    """One row per adviser × uploaded model: CRD, total AUM, strategy AUM, YTD AUM change, account count."""
+    """One row per adviser: totals, then dollars and account counts for each strategy."""
     current_date = as_of_date or _get_latest_snapshot_date(db)
     if not current_date:
-        return AdviserStrategyExportResponse()
+        return AdviserStrategyExportResponse(columns=list(_ADVISER_AUM_EXPORT_COLUMNS))
 
     baseline_date = _get_ytd_baseline_date(db, current_date)
     current_by_key = _adviser_strategy_snapshot_aggregate_sql(db, current_date)
@@ -1398,11 +1538,13 @@ async def get_adviser_strategy_export(
         _adviser_strategy_snapshot_aggregate_sql(db, baseline_date) if baseline_date else {}
     )
     crd_by_adviser = _crd_by_adviser_sql(db)
-    rows = _merge_adviser_strategy_export_rows(current_by_key, baseline_by_key, crd_by_adviser)
+    long_rows = _merge_adviser_strategy_export_rows(current_by_key, baseline_by_key, crd_by_adviser)
+    columns, rows = _adviser_aum_export_table(long_rows)
     return AdviserStrategyExportResponse(
         has_baseline=baseline_date is not None and bool(baseline_by_key or current_by_key),
         baseline_date=baseline_date,
         current_date=current_date,
+        columns=columns,
         rows=rows,
     )
 
@@ -2252,6 +2394,128 @@ async def get_equivalent_accounts(
         )
     result.sort(key=lambda x: (-float(x.value), x.adviser or "", x.partial_account_number or ""))
     return result
+
+
+def _normalize_advisor_crd(value: Optional[str]) -> Optional[str]:
+    """Blank clears the CRD. Any other value must be numeric."""
+    text = (value or "").strip()
+    if not text:
+        return None
+    if not text.isdigit() or len(text) > 32:
+        raise HTTPException(status_code=400, detail="CRD must be a numeric value")
+    return text
+
+
+def _assemble_adviser_info(
+    identity_rows: List[Tuple[Any, Any, Any]],
+    snapshot_rows: List[Tuple[Any, Any, Any]],
+) -> List[AdviserInfoItem]:
+    """Combine adviser identity/CRD rows with snapshot account counts and AUM."""
+    crd_counts: Dict[str, Dict[str, int]] = {}
+    for raw_name, raw_crd, raw_count in identity_rows:
+        name = (raw_name or "").strip()
+        if not name:
+            continue
+        counts = crd_counts.setdefault(name, {})
+        crd = (raw_crd or "").strip()
+        if crd:
+            counts[crd] = counts.get(crd, 0) + int(raw_count or 0)
+
+    snapshot_by_name: Dict[str, Tuple[int, Decimal]] = {}
+    for raw_name, raw_count, raw_aum in snapshot_rows:
+        name = (raw_name or "").strip()
+        if not name:
+            continue
+        snapshot_by_name[name] = (int(raw_count or 0), Decimal(str(raw_aum or 0)))
+
+    items: List[AdviserInfoItem] = []
+    for name in sorted(set(crd_counts) | set(snapshot_by_name), key=str.lower):
+        counts = crd_counts.get(name, {})
+        crd = None
+        if counts:
+            crd = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
+        account_count, total_aum = snapshot_by_name.get(name, (0, Decimal("0")))
+        items.append(
+            AdviserInfoItem(
+                adviser_name=name,
+                crd=crd,
+                account_count=account_count,
+                total_aum=total_aum,
+            )
+        )
+    items.sort(key=lambda item: (-float(item.total_aum), item.adviser_name.lower()))
+    return items
+
+
+@router.get("/adviser-info", response_model=AdviserInfoResponse)
+async def get_adviser_info(
+    as_of_date: Optional[date] = None,
+    db: Session = Depends(get_db),
+):
+    """Each adviser with CRD, snapshot account count, and total AUM."""
+    snapshot_date = as_of_date or _get_latest_snapshot_date(db)
+    name_expr = func.trim(MonitoredAccount.advisor)
+    identity_rows = (
+        db.query(name_expr, MonitoredAccount.advisor_crd, func.count())
+        .filter(
+            MonitoredAccount.advisor.isnot(None),
+            name_expr != "",
+        )
+        .group_by(name_expr, MonitoredAccount.advisor_crd)
+        .all()
+    )
+    snapshot_rows = []
+    if snapshot_date:
+        snapshot_rows = (
+            db.query(
+                name_expr,
+                func.count(AccountSnapshot.id),
+                func.coalesce(func.sum(AccountSnapshot.total_value), 0),
+            )
+            .select_from(AccountSnapshot)
+            .join(MonitoredAccount, AccountSnapshot.monitored_account_id == MonitoredAccount.id)
+            .filter(
+                AccountSnapshot.as_of_date == snapshot_date,
+                MonitoredAccount.advisor.isnot(None),
+                name_expr != "",
+            )
+            .group_by(name_expr)
+            .all()
+        )
+    return AdviserInfoResponse(
+        as_of_date=snapshot_date,
+        advisers=_assemble_adviser_info(identity_rows, snapshot_rows),
+    )
+
+
+@router.patch("/adviser-info", response_model=AdviserCrdUpdateResponse)
+async def update_adviser_crd(
+    body: AdviserCrdUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    """Set or clear advisor_crd on every account for one adviser name."""
+    name = body.adviser_name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Adviser name is required")
+    crd = _normalize_advisor_crd(body.advisor_crd)
+    accounts = (
+        db.query(MonitoredAccount)
+        .filter(
+            MonitoredAccount.advisor.isnot(None),
+            func.trim(MonitoredAccount.advisor) == name,
+        )
+        .all()
+    )
+    if not accounts:
+        raise HTTPException(status_code=404, detail="Adviser not found")
+    for account in accounts:
+        account.advisor_crd = crd
+    db.commit()
+    return AdviserCrdUpdateResponse(
+        adviser_name=name,
+        advisor_crd=crd,
+        updated_count=len(accounts),
+    )
 
 
 @router.get("/advisers", response_model=List[str])

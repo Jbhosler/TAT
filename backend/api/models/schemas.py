@@ -757,7 +757,7 @@ class TotalFirmYtdResponse(BaseModel):
 
 
 class AdviserStrategyExportItem(BaseModel):
-    """One row in the monitoring adviser × strategy AUM export."""
+    """Internal adviser × strategy aggregate before the export is pivoted."""
     crd: Optional[str] = None
     adviser_name: str
     total_aum_by_adviser: Decimal = Decimal("0")
@@ -768,11 +768,42 @@ class AdviserStrategyExportItem(BaseModel):
 
 
 class AdviserStrategyExportResponse(BaseModel):
-    """GET /api/monitoring/adviser-strategy-export."""
+    """GET /api/monitoring/adviser-strategy-export.
+
+    One CSV-ready row per adviser. Dollar cells use accounting format
+    (`$1,234.56`, `($1,234.56)`, `$ -`).
+    """
     has_baseline: bool = False
     baseline_date: Optional[date] = None
     current_date: Optional[date] = None
-    rows: List[AdviserStrategyExportItem] = []
+    columns: List[str] = []
+    rows: List[List[str]] = []
+
+
+class AdviserInfoItem(BaseModel):
+    """One adviser on the Monitoring Adviser Info tab."""
+    adviser_name: str
+    crd: Optional[str] = None
+    account_count: int = 0
+    total_aum: Decimal = Decimal("0")
+
+
+class AdviserInfoResponse(BaseModel):
+    """GET /api/monitoring/adviser-info."""
+    as_of_date: Optional[date] = None
+    advisers: List[AdviserInfoItem] = []
+
+
+class AdviserCrdUpdateRequest(BaseModel):
+    """PATCH /api/monitoring/adviser-info. Blank CRD clears the value."""
+    adviser_name: str = Field(..., min_length=1, max_length=255)
+    advisor_crd: Optional[str] = Field(None, max_length=32)
+
+
+class AdviserCrdUpdateResponse(BaseModel):
+    adviser_name: str
+    advisor_crd: Optional[str] = None
+    updated_count: int = 0
 
 
 # Ingest changes (prior vs current upload)

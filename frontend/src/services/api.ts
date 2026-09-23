@@ -361,6 +361,21 @@ export const monitoringAPI = {
       value: number;
       pct_of_equivalent_total: number;
     }>>(`/api/monitoring/equivalents-usage/${equivalentId}/accounts`, { params }),
+  adviserInfo: (params?: { as_of_date?: string }) =>
+    api.get<{
+      as_of_date: string | null;
+      advisers: Array<{
+        adviser_name: string;
+        crd: string | null;
+        account_count: number;
+        total_aum: number;
+      }>;
+    }>('/api/monitoring/adviser-info', { params }),
+  updateAdviserCrd: (body: { adviser_name: string; advisor_crd: string | null }) =>
+    api.patch<{ adviser_name: string; advisor_crd: string | null; updated_count: number }>(
+      '/api/monitoring/adviser-info',
+      body,
+    ),
   listAdvisers: () => api.get<string[]>('/api/monitoring/advisers'),
   getAdviserAccounts: (adviser: string, params?: { as_of_date?: string }) =>
     api.get<{
@@ -374,15 +389,8 @@ export const monitoringAPI = {
       has_baseline: boolean;
       baseline_date: string | null;
       current_date: string | null;
-      rows: Array<{
-        crd: string | null;
-        adviser_name: string;
-        total_aum_by_adviser: number;
-        strategy_name: string;
-        aum_by_strategy: number;
-        ytd_aum_change: number;
-        account_count: number;
-      }>;
+      columns: string[];
+      rows: string[][];
     }>('/api/monitoring/adviser-strategy-export', { params }),
   // Equivalent Review
   equivalentReview: (params?: { strategy_id?: string }) =>

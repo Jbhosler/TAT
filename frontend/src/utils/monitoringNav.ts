@@ -3,6 +3,7 @@ const MONITORING_TABS = [
   'heatmap',
   'concentration',
   'byadviser',
+  'adviserinfo',
   'uploadchanges',
   'unusedequivalents',
   'equivalentreview',
