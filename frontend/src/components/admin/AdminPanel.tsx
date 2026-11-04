@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { strategiesAPI } from '../../services/api';
 import AdminUploads from './AdminUploads';
 import StrategyEditor from './StrategyEditor';
+import StrategyHoldings from './StrategyHoldings';
 import StrategyBridge from '../monitoring/StrategyBridge';
 import AssetClassMapper from './AssetClassMapper';
 import ProductEquivalents from './ProductEquivalents';
@@ -10,13 +11,50 @@ import DataIntegrity from './DataIntegrity';
 import AuthorizedUsers from './AuthorizedUsers';
 
 type Strategy = { id: string; name: string };
+type AdminTab = 'uploads' | 'editor' | 'holdings' | 'bridge' | 'mapper' | 'equivalents' | 'integrity' | 'users';
+type HoldingsGuard = { dirty: boolean; saving: boolean };
 
 const AdminPanel = () => {
-  const [activeTab, setActiveTab] = useState<'uploads' | 'editor' | 'bridge' | 'mapper' | 'equivalents' | 'integrity' | 'users'>('uploads');
+  const [activeTab, setActiveTab] = useState<AdminTab>('uploads');
   const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const holdingsGuardRef = useRef<HoldingsGuard>({ dirty: false, saving: false });
+  const [holdingsGuard, setHoldingsGuard] = useState<HoldingsGuard>({ dirty: false, saving: false });
   const authRole = localStorage.getItem('auth_role') || 'user';
   const canAccessAdmin = authRole === 'admin' || authRole === 'super_admin';
   const canManageUsers = authRole === 'super_admin';
+
+  const onHoldingsGuardChange = useCallback((guard: HoldingsGuard) => {
+    holdingsGuardRef.current = guard;
+    setHoldingsGuard(guard);
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'holdings' || (!holdingsGuard.dirty && !holdingsGuard.saving)) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [activeTab, holdingsGuard]);
+
+  const confirmLeaveHoldings = () => {
+    if (activeTab !== 'holdings') return true;
+    const guard = holdingsGuardRef.current;
+    if (guard.saving) {
+      return window.confirm('Holdings are still being saved and monitoring is recalculating. Leave anyway?');
+    }
+    if (guard.dirty) {
+      return window.confirm('You have unsaved holdings changes. Leave and discard them?');
+    }
+    return true;
+  };
+
+  const requestTab = (tab: AdminTab) => {
+    if (tab === activeTab) return;
+    if (!confirmLeaveHoldings()) return;
+    setActiveTab(tab);
+  };
 
   useEffect(() => {
     strategiesAPI.list()
@@ -48,18 +86,27 @@ const AdminPanel = () => {
             <div className="flex items-center gap-4">
               <Link
                 to="/scenarios"
+                onClick={(event) => {
+                  if (!confirmLeaveHoldings()) event.preventDefault();
+                }}
                 className="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium"
               >
                 Scenarios
               </Link>
               <Link
                 to="/monitoring"
+                onClick={(event) => {
+                  if (!confirmLeaveHoldings()) event.preventDefault();
+                }}
                 className="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium"
               >
                 Monitoring
               </Link>
               <Link
                 to="/dashboard"
+                onClick={(event) => {
+                  if (!confirmLeaveHoldings()) event.preventDefault();
+                }}
                 className="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium"
               >
                 Back to Dashboard
@@ -78,9 +125,9 @@ const AdminPanel = () => {
           )}
           {/* Tabs */}
           <div className="border-b border-gray-200">
-            <nav className="-mb-px flex space-x-8">
+            <nav className="-mb-px flex space-x-8 overflow-x-auto">
               <button
-                onClick={() => setActiveTab('uploads')}
+                onClick={() => requestTab('uploads')}
                 className={`${
                   activeTab === 'uploads'
                     ? 'border-indigo-500 text-indigo-600'
@@ -90,7 +137,7 @@ const AdminPanel = () => {
                 Uploads
               </button>
               <button
-                onClick={() => setActiveTab('editor')}
+                onClick={() => requestTab('editor')}
                 className={`${
                   activeTab === 'editor'
                     ? 'border-indigo-500 text-indigo-600'
@@ -100,7 +147,17 @@ const AdminPanel = () => {
                 Strategy Editor
               </button>
               <button
-                onClick={() => setActiveTab('bridge')}
+                onClick={() => requestTab('holdings')}
+                className={`${
+                  activeTab === 'holdings'
+                    ? 'border-indigo-500 text-indigo-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
+              >
+                Holdings
+              </button>
+              <button
+                onClick={() => requestTab('bridge')}
                 className={`${
                   activeTab === 'bridge'
                     ? 'border-indigo-500 text-indigo-600'
@@ -110,7 +167,7 @@ const AdminPanel = () => {
                 Strategy Bridge
               </button>
               <button
-                onClick={() => setActiveTab('mapper')}
+                onClick={() => requestTab('mapper')}
                 className={`${
                   activeTab === 'mapper'
                     ? 'border-indigo-500 text-indigo-600'
@@ -120,7 +177,7 @@ const AdminPanel = () => {
                 Asset Class Mapper
               </button>
               <button
-                onClick={() => setActiveTab('equivalents')}
+                onClick={() => requestTab('equivalents')}
                 className={`${
                   activeTab === 'equivalents'
                     ? 'border-indigo-500 text-indigo-600'
@@ -130,7 +187,7 @@ const AdminPanel = () => {
                 Product Equivalents
               </button>
               <button
-                onClick={() => setActiveTab('integrity')}
+                onClick={() => requestTab('integrity')}
                 className={`${
                   activeTab === 'integrity'
                     ? 'border-indigo-500 text-indigo-600'
@@ -141,7 +198,7 @@ const AdminPanel = () => {
               </button>
               {canManageUsers && (
                 <button
-                  onClick={() => setActiveTab('users')}
+                  onClick={() => requestTab('users')}
                   className={`${
                     activeTab === 'users'
                       ? 'border-indigo-500 text-indigo-600'
@@ -170,6 +227,9 @@ const AdminPanel = () => {
               />
             )}
             {canAccessAdmin && activeTab === 'editor' && <StrategyEditor />}
+            {canAccessAdmin && activeTab === 'holdings' && (
+              <StrategyHoldings onGuardChange={onHoldingsGuardChange} />
+            )}
             {canAccessAdmin && activeTab === 'bridge' && <StrategyBridge />}
             {canAccessAdmin && activeTab === 'mapper' && <AssetClassMapper />}
             {canAccessAdmin && activeTab === 'equivalents' && (
