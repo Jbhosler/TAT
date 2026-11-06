@@ -246,6 +246,39 @@ def _gain_retention_rate(net_gain_loss: float, pre_unrealized: float) -> Optiona
     return 100.0 - (net_gain_loss / pre_unrealized * 100.0)
 
 
+def _displayed_dollars(n: float) -> int:
+    """Whole dollars, same rounding as _money (half-even)."""
+    sign = -1 if n < 0 else 1
+    return sign * int(f"{abs(n):.0f}")
+
+
+def _current_portfolio_totals(holdings: List[Dict[str, Any]]) -> Tuple[float, float]:
+    """Market value and custodian cost basis for the current portfolio.
+
+    Unrealized gain/loss supplied by the custodian is market value minus cost
+    basis, so cost basis is recovered per holding as value − unrealized.
+    Side-pocket rows are included; they are part of the current holdings table.
+    """
+    market_value = 0.0
+    cost_basis = 0.0
+    for holding in holdings:
+        value = _float(holding.get("value"))
+        unrealized = _float(holding.get("unrealized_gain_loss"))
+        market_value += value
+        cost_basis += value - unrealized
+    return market_value, cost_basis
+
+
+def _cost_basis_reconciles(market_value: float, unrealized: float, cost_basis: float) -> bool:
+    """Displayed market value − unrealized equals cost basis within $1."""
+    residual = (
+        _displayed_dollars(market_value)
+        - _displayed_dollars(unrealized)
+        - _displayed_dollars(cost_basis)
+    )
+    return abs(residual) <= 1
+
+
 # ---------------------------------------------------------------------------
 # Custom flowables
 # ---------------------------------------------------------------------------
@@ -532,6 +565,55 @@ class StatCard(Flowable):
         for line in lines:
             self.canv.drawString(pad, y, line)
             y -= line_h
+
+
+class MarketValueCostBasisBar(Flowable):
+    """Two-metric banner: current market value and total cost basis."""
+
+    def __init__(self, market_value: str, cost_basis: str, width: float, height: float = 40):
+        super().__init__()
+        self.market_value = market_value
+        self.cost_basis = cost_basis
+        self.width = width
+        self.height = height
+
+    def wrap(self, availWidth, availHeight):
+        return self.width, self.height
+
+    def draw(self):
+        w, h = self.width, self.height
+        self.canv.setFillColor(AUOUR_STAT_TINT)
+        self.canv.setStrokeColor(AUOUR_NAVY)
+        self.canv.setLineWidth(0.75)
+        self.canv.rect(0, 0, w, h, stroke=1, fill=1)
+
+        # 3pt gold accent on the left edge.
+        self.canv.setFillColor(AUOUR_BRASS)
+        self.canv.rect(0, 0, 3, h, stroke=0, fill=1)
+
+        mid = w / 2.0
+        self.canv.setStrokeColor(AUOUR_GRAY)
+        self.canv.setLineWidth(0.5)
+        self.canv.line(mid, 8, mid, h - 8)
+
+        value_size = 17
+        label_size = 7
+        # Center each cap-height in the bar so the label and figure share one row.
+        mid_y = h / 2.0
+        value_baseline = mid_y - (value_size * 0.70) / 2.0
+        label_baseline = mid_y - (label_size * 0.70) / 2.0
+        pad = 12
+        halves = (
+            (pad, mid - pad, "CURRENT MARKET VALUE", self.market_value),
+            (mid + pad, w - pad, "TOTAL COST BASIS", self.cost_basis),
+        )
+        for left, right, label, value in halves:
+            self.canv.setFillColor(AUOUR_GRAY)
+            self.canv.setFont(_FONT_SANS, label_size)
+            self.canv.drawString(left, label_baseline, label)
+            self.canv.setFillColor(AUOUR_NAVY)
+            self.canv.setFont(_FONT_SERIF, value_size)
+            self.canv.drawRightString(right, value_baseline, value)
 
 
 class TradeSubhead(Flowable):
@@ -832,6 +914,24 @@ def _p_html(html: str, style: ParagraphStyle) -> Paragraph:
     return Paragraph(html, style)
 
 
+def _brass_callout(html: str, width: float, styles: Dict[str, ParagraphStyle]) -> Table:
+    """Amber notice with a brass 'Action required' lead-in. html is trusted mini-HTML."""
+    callout = Table(
+        [[Paragraph(html, styles["callout"])]],
+        colWidths=[width],
+    )
+    callout.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), AUOUR_CALLOUT_BG),
+        ("BOX", (0, 0), (-1, -1), 1, colors.Color(169 / 255, 119 / 255, 63 / 255, alpha=0.4)),
+        ("LINEBEFORE", (0, 0), (0, 0), 3, AUOUR_BRASS),
+        ("LEFTPADDING", (0, 0), (-1, -1), 14),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+        ("TOPPADDING", (0, 0), (-1, -1), 12),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+    ]))
+    return callout
+
+
 def _table_header_row(labels: List[str], styles: Dict[str, ParagraphStyle], aligns: Optional[List[str]] = None) -> List[Paragraph]:
     aligns = aligns or ["LEFT"] * len(labels)
     out = []
@@ -976,148 +1076,250 @@ def build_transition_report_pdf(
     target_positions = list(target_positions or [])
 
     styles = _build_styles()
-    buf = BytesIO()
-    doc = SimpleDocTemplate(
-        buf,
-        pagesize=letter,
-        leftMargin=PAGE_MARGIN,
-        rightMargin=PAGE_MARGIN,
-        topMargin=PAGE_MARGIN,
-        bottomMargin=0.7 * inch,
-    )
-    story: List[Any] = []
     w = CONTENT_WIDTH_PT
-
-    # =====================================================================
-    # COVER + 01 on first page (matches sample PDF pagination)
-    # =====================================================================
-    header = Table(
-        [[
-            [
-                Paragraph("Auour Investments", styles["wordmark"]),
-                Paragraph("BOSTON, MASSACHUSETTS · EST. 2013", styles["wordmark_sub"]),
-            ],
-            Paragraph("C O N F I D E N T I A L", styles["confidential"]),
-        ]],
-        colWidths=[w * 0.72, w * 0.28],
+    # Same outer width as the three KPI cards (gaps are inside that row).
+    kpi_row_w = w - 2 * STAT_CARD_GAP
+    market_value, cost_basis = _current_portfolio_totals(pre_holdings)
+    basis_reconciles = _cost_basis_reconciles(
+        market_value, pre_unrealized_gain_loss, cost_basis
     )
-    header.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    story.append(header)
-    # Sample gaps (pt): wordmark→eyebrow ≈55, title→meta ≈52, meta→01 ≈98, 01→cards ≈59
-    story.append(Spacer(1, 44))
 
-    # Strategy eyebrow — append "STRATEGY" when not already present (sample shows full label)
-    eyebrow = strategy_name.strip()
-    if "strategy" not in eyebrow.lower():
-        eyebrow = f"{eyebrow} Strategy"
-    story.append(Paragraph(_xml_safe(eyebrow).upper(), styles["eyebrow"]))
+    # Preferred spacing matches the sample cover. Compact is used only when the
+    # narrative would otherwise continue onto page 2 (longest pasted narratives).
+    page1_spacing_presets: List[Dict[str, float]] = [
+        {
+            "after_header": 44,
+            "after_title": 40,
+            "rule_after": 16,
+            "after_meta": 44,
+            "after_section": 8,
+            "after_bar": 12,
+            "after_cards": 22,
+            "body_size": 9.8,
+            "body_leading": 15.7,
+            "body_after": 14,
+            "title_size": 40.5,
+            "title_leading": 42,
+        },
+        {
+            "after_header": 20,
+            "after_title": 16,
+            "rule_after": 8,
+            "after_meta": 16,
+            "after_section": 6,
+            "after_bar": 12,
+            "after_cards": 10,
+            "body_size": 9.4,
+            "body_leading": 12.2,
+            "body_after": 6,
+            "title_size": 36,
+            "title_leading": 38,
+        },
+        {
+            "after_header": 12,
+            "after_title": 10,
+            "rule_after": 6,
+            "after_meta": 10,
+            "after_section": 4,
+            "after_bar": 12,
+            "after_cards": 6,
+            "body_size": 9.1,
+            "body_leading": 11.2,
+            "body_after": 4,
+            "title_size": 32,
+            "title_leading": 34,
+        },
+    ]
 
-    cover_title_style = ParagraphStyle(
-        "CoverTitleHtml",
-        parent=styles["cover_title"],
-        fontName=_FONT_SERIF_MED if _FONT_SERIF_MED != "Helvetica" else "Helvetica",
-    )
-    if _FONT_SERIF_ITALIC != "Helvetica-Oblique":
-        story.append(Paragraph(
-            f'Transition <font name="{_FONT_SERIF_ITALIC}">Report</font>',
-            cover_title_style,
+    def _make_doc(target: BytesIO) -> SimpleDocTemplate:
+        return SimpleDocTemplate(
+            target,
+            pagesize=letter,
+            leftMargin=PAGE_MARGIN,
+            rightMargin=PAGE_MARGIN,
+            topMargin=PAGE_MARGIN,
+            bottomMargin=0.7 * inch,
+        )
+
+    def _page1_story(spacing: Dict[str, float]) -> List[Any]:
+        page: List[Any] = []
+        header = Table(
+            [[
+                [
+                    Paragraph("Auour Investments", styles["wordmark"]),
+                    Paragraph("BOSTON, MASSACHUSETTS · EST. 2013", styles["wordmark_sub"]),
+                ],
+                Paragraph("C O N F I D E N T I A L", styles["confidential"]),
+            ]],
+            colWidths=[w * 0.72, w * 0.28],
+        )
+        header.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        page.append(header)
+        page.append(Spacer(1, spacing["after_header"]))
+
+        eyebrow = strategy_name.strip()
+        if "strategy" not in eyebrow.lower():
+            eyebrow = f"{eyebrow} Strategy"
+        page.append(Paragraph(_xml_safe(eyebrow).upper(), styles["eyebrow"]))
+
+        cover_title_style = ParagraphStyle(
+            "CoverTitleHtml",
+            parent=styles["cover_title"],
+            fontName=_FONT_SERIF_MED if _FONT_SERIF_MED != "Helvetica" else "Helvetica",
+            fontSize=spacing["title_size"],
+            leading=spacing["title_leading"],
+        )
+        if _FONT_SERIF_ITALIC != "Helvetica-Oblique":
+            page.append(Paragraph(
+                f'Transition <font name="{_FONT_SERIF_ITALIC}">Report</font>',
+                cover_title_style,
+            ))
+        else:
+            page.append(Paragraph("Transition <i>Report</i>", cover_title_style))
+        page.append(Spacer(1, spacing["after_title"]))
+        page.append(HRFlowable(
+            width="100%",
+            thickness=0.75,
+            color=AUOUR_BORDER_STRONG,
+            spaceBefore=0,
+            spaceAfter=spacing["rule_after"],
         ))
-    else:
-        story.append(Paragraph("Transition <i>Report</i>", cover_title_style))
-    # Sample: title box bottom ~187 → meta ~239 (≈52pt including rule)
-    story.append(Spacer(1, 40))
-    story.append(HRFlowable(width="100%", thickness=0.75, color=AUOUR_BORDER_STRONG, spaceBefore=0, spaceAfter=16))
 
-    meta = Table(
-        [[
-            [
-                Paragraph("PROSPECT", styles["meta_label"]),
-                Paragraph(_xml_safe(prospect_name), styles["meta_value"]),
-            ],
-            [
-                Paragraph("STRATEGY", styles["meta_label"]),
-                Paragraph(_xml_safe(strategy_name), styles["meta_value"]),
-            ],
-            [
-                Paragraph("REPORT DATE", styles["meta_label"]),
-                Paragraph(_xml_safe(report_date.strftime("%B %d, %Y")), styles["meta_value"]),
-            ],
-        ]],
-        colWidths=[w / 3.0, w / 3.0, w / 3.0],
-    )
-    meta.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (1, -1), 12),
-        ("RIGHTPADDING", (2, 0), (2, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    story.append(meta)
-    # Sample: meta block ends ~y275, section header ~y333
-    story.append(Spacer(1, 44))
+        meta = Table(
+            [[
+                [
+                    Paragraph("PROSPECT", styles["meta_label"]),
+                    Paragraph(_xml_safe(prospect_name), styles["meta_value"]),
+                ],
+                [
+                    Paragraph("STRATEGY", styles["meta_label"]),
+                    Paragraph(_xml_safe(strategy_name), styles["meta_value"]),
+                ],
+                [
+                    Paragraph("REPORT DATE", styles["meta_label"]),
+                    Paragraph(_xml_safe(report_date.strftime("%B %d, %Y")), styles["meta_value"]),
+                ],
+            ]],
+            colWidths=[w / 3.0, w / 3.0, w / 3.0],
+        )
+        meta.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (1, -1), 12),
+            ("RIGHTPADDING", (2, 0), (2, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        page.append(meta)
+        page.append(Spacer(1, spacing["after_meta"]))
 
-    # ----- 01 Portfolio Impact Summary (continues on page 1) -----
-    story.append(SectionHeader("01", "Portfolio Impact Summary", w))
-    story.append(Spacer(1, 28))
+        # ----- 01 Portfolio Impact Summary -----
+        page.append(SectionHeader("01", "Portfolio Impact Summary", w))
+        page.append(Spacer(1, spacing["after_section"]))
+        page.append(MarketValueCostBasisBar(
+            _money(market_value),
+            _money(cost_basis),
+            kpi_row_w,
+            height=40,
+        ))
+        page.append(Spacer(1, spacing["after_bar"]))
 
-    retention = _gain_retention_rate(net_gain_loss, pre_unrealized_gain_loss)
-    retention_label = f"{retention:.1f}%" if retention is not None else "—"
-    retention_caption = (
-        f"Share of current unrealized gain deferred "
-        f"(100% − {_money(net_gain_loss)} ÷ {_money(pre_unrealized_gain_loss)})"
-        if retention is not None
-        else "Unavailable when current unrealized is zero"
-    )
+        retention = _gain_retention_rate(net_gain_loss, pre_unrealized_gain_loss)
+        retention_label = f"{retention:.1f}%" if retention is not None else "—"
+        retention_caption = (
+            f"Share of current unrealized gain deferred "
+            f"(100% − {_money(net_gain_loss)} ÷ {_money(pre_unrealized_gain_loss)})"
+            if retention is not None
+            else "Unavailable when current unrealized is zero"
+        )
 
-    card_w = (w - 2 * STAT_CARD_GAP) / 3.0
-    cards = Table(
-        [[
-            StatCard(
-                "Net Realized Gain / Loss",
-                _money(net_gain_loss),
-                "Tax realization from proposed trades",
-                width=card_w,
-            ),
-            StatCard(
-                "Unrealized — Current",
-                _money(pre_unrealized_gain_loss),
-                "Unrealized amount before transition",
-                width=card_w,
-            ),
-            StatCard(
-                "Gain Retention Rate",
-                retention_label,
-                retention_caption,
-                width=card_w,
-                tinted=True,
-                green=True,
-            ),
-        ]],
-        colWidths=[card_w, card_w, card_w],
-        hAlign="LEFT",
-    )
-    cards.setStyle(TableStyle([
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (1, -1), STAT_CARD_GAP),
-        ("RIGHTPADDING", (2, 0), (2, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-    ]))
-    story.append(cards)
-    # Sample: card top ~381 → body ~512; card height 108 → ~23pt after cards
-    story.append(Spacer(1, 22))
+        card_w = kpi_row_w / 3.0
+        cards = Table(
+            [[
+                StatCard(
+                    "Net Realized Gain / Loss",
+                    _money(net_gain_loss),
+                    "Tax realization from proposed trades",
+                    width=card_w,
+                ),
+                StatCard(
+                    "Unrealized — Current",
+                    _money(pre_unrealized_gain_loss),
+                    "Unrealized amount before transition",
+                    width=card_w,
+                ),
+                StatCard(
+                    "Gain Retention Rate",
+                    retention_label,
+                    retention_caption,
+                    width=card_w,
+                    tinted=True,
+                    green=True,
+                ),
+            ]],
+            colWidths=[card_w, card_w, card_w],
+            hAlign="LEFT",
+        )
+        cards.setStyle(TableStyle([
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (1, -1), STAT_CARD_GAP),
+            ("RIGHTPADDING", (2, 0), (2, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        page.append(cards)
+        page.append(Spacer(1, spacing["after_cards"]))
 
-    for p in _split_paragraphs(additional_text):
-        story.append(Paragraph(_xml_safe(p), styles["body"]))
+        if not basis_reconciles:
+            shown_mv = _money(market_value)
+            shown_unreal = _money(pre_unrealized_gain_loss)
+            shown_basis = _money(cost_basis)
+            notice = _brass_callout(
+                (
+                    f'<font color="#A9773F"><b>Action required.</b></font> '
+                    f"Current market value ({shown_mv}) minus Unrealized — Current "
+                    f"({shown_unreal}) does not equal total cost basis ({shown_basis}) "
+                    f"within $1. Confirm custodian cost basis before relying on these figures."
+                ),
+                kpi_row_w,
+                styles,
+            )
+            notice.hAlign = "LEFT"
+            page.append(notice)
+            page.append(Spacer(1, 8))
 
+        narrative_style = ParagraphStyle(
+            "Page1Narrative",
+            parent=styles["body"],
+            fontName=_FONT_SANS,
+            fontSize=spacing["body_size"],
+            leading=spacing["body_leading"],
+            textColor=AUOUR_NAVY,
+            spaceAfter=spacing["body_after"],
+        )
+        for paragraph in _split_paragraphs(additional_text):
+            page.append(Paragraph(_xml_safe(paragraph), narrative_style))
+        return page
+
+    chosen_spacing = page1_spacing_presets[-1]
+    for spacing in page1_spacing_presets:
+        probe = BytesIO()
+        probe_doc = _make_doc(probe)
+        probe_doc.build(_page1_story(spacing))
+        chosen_spacing = spacing
+        if probe_doc.page <= 1:
+            break
+
+    buf = BytesIO()
+    doc = _make_doc(buf)
+    story: List[Any] = _page1_story(chosen_spacing)
     story.append(PageBreak())
 
     # =====================================================================
@@ -1410,20 +1612,7 @@ def build_transition_report_pdf(
                 f"strategy product equivalents file. Add these pairs in "
                 f"<b>Admin → Product Equivalents</b> or confirm the manual mapping was intentional."
             )
-            callout = Table(
-                [[Paragraph(callout_html, styles["callout"])]],
-                colWidths=[w],
-            )
-            callout.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, -1), AUOUR_CALLOUT_BG),
-                ("BOX", (0, 0), (-1, -1), 1, colors.Color(169 / 255, 119 / 255, 63 / 255, alpha=0.4)),
-                ("LINEBEFORE", (0, 0), (0, 0), 3, AUOUR_BRASS),
-                ("LEFTPADDING", (0, 0), (-1, -1), 14),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 14),
-                ("TOPPADDING", (0, 0), (-1, -1), 12),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
-            ]))
-            story.append(callout)
+            story.append(_brass_callout(callout_html, w, styles))
             story.append(Spacer(1, 16))
 
         map_rows: List[List[Any]] = [
