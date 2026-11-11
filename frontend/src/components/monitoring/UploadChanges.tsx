@@ -23,6 +23,14 @@ type AdviserChangeItem = {
   delta: number;
 };
 
+type CrdGapItem = {
+  adviser_name: string;
+  account_count: number;
+  total_aum: number;
+  status: string;
+  crds: string[];
+};
+
 type IngestChanges = {
   has_prior: boolean;
   prior_date: string | null;
@@ -39,14 +47,138 @@ type IngestChanges = {
   removed_advisers: string[];
   adviser_account_changes: AdviserChangeItem[];
   accounts_with_holdings_changes: AccountChangeItem[];
+  missing_crd_count?: number;
+  advisers_missing_crd?: CrdGapItem[];
+  advisers_with_conflicting_crd?: CrdGapItem[];
 };
 
 type UploadChangesProps = {
   snapshotDates?: string[];
   refreshTrigger?: string | null;
+  onCrdChange?: () => void;
 };
 
-const UploadChanges = ({ snapshotDates = [], refreshTrigger }: UploadChangesProps) => {
+const formatGapDollars = (value: number) =>
+  `$${Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+
+const CrdGapPanel = ({
+  missing,
+  conflicts,
+  missingCount,
+  currentDate,
+  onSaved,
+}: {
+  missing: CrdGapItem[];
+  conflicts: CrdGapItem[];
+  missingCount: number;
+  currentDate?: string | null;
+  onSaved: () => void;
+}) => {
+  const rows = [...missing, ...conflicts];
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const reviewParams = new URLSearchParams({ tab: 'adviserinfo', missing_crd: '1' });
+  if (currentDate) reviewParams.set('as_of_date', currentDate);
+
+  const save = async (name: string) => {
+    const draft = (drafts[name] ?? '').trim();
+    if (!/^\d+$/.test(draft)) {
+      setErrors((prev) => ({ ...prev, [name]: 'CRD must be numeric.' }));
+      return;
+    }
+    setSaving(name);
+    setErrors((prev) => ({ ...prev, [name]: '' }));
+    try {
+      await monitoringAPI.updateAdviserCrd({ adviser_name: name, advisor_crd: draft });
+      onSaved();
+    } catch {
+      setErrors((prev) => ({ ...prev, [name]: 'Could not save CRD.' }));
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  return (
+    <div className="bg-white shadow rounded-lg p-6 border-l-4 border-amber-400">
+      <div className="flex flex-wrap items-baseline justify-between gap-3 mb-2">
+        <h3 className="text-lg font-semibold text-gray-900">Adviser CRD</h3>
+        <Link
+          to={`/monitoring?${reviewParams.toString()}`}
+          className="text-sm font-medium text-indigo-600 hover:text-indigo-800"
+        >
+          Review in Adviser Info
+        </Link>
+      </div>
+      <p className="text-sm text-gray-700 mb-4">
+        {missingCount === 1 ? '1 adviser has no CRD.' : `${missingCount} advisers have no CRD.`}
+      </p>
+      {rows.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Adviser</th>
+                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Accounts</th>
+                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">AUM</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">CRD</th>
+                <th className="px-4 py-2" />
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {rows.map((row) => {
+                const draft = drafts[row.adviser_name] ?? '';
+                const invalid = draft.trim() !== '' && !/^\d+$/.test(draft.trim());
+                return (
+                  <tr key={`${row.status}-${row.adviser_name}`}>
+                    <td className="px-4 py-2 text-sm text-gray-900">{row.adviser_name}</td>
+                    <td className="px-4 py-2 text-sm text-right text-gray-900">{row.account_count}</td>
+                    <td className="px-4 py-2 text-sm text-right text-gray-900">{formatGapDollars(row.total_aum)}</td>
+                    <td className="px-4 py-2">
+                      <input
+                        value={draft}
+                        onChange={(e) => setDrafts((prev) => ({ ...prev, [row.adviser_name]: e.target.value }))}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && /^\d+$/.test(draft.trim())) save(row.adviser_name);
+                        }}
+                        inputMode="numeric"
+                        maxLength={32}
+                        aria-label={`CRD for ${row.adviser_name}`}
+                        placeholder={row.status === 'conflict' ? 'Choose one' : 'CRD'}
+                        className="w-36 rounded-md border-gray-300 shadow-sm text-sm"
+                      />
+                      {row.status === 'conflict' && (
+                        <p className="mt-1 text-xs text-amber-700">Found: {row.crds.join(', ')}</p>
+                      )}
+                      {errors[row.adviser_name] && (
+                        <p className="mt-1 text-xs text-red-600">{errors[row.adviser_name]}</p>
+                      )}
+                      {invalid && !errors[row.adviser_name] && (
+                        <p className="mt-1 text-xs text-red-600">CRD must be numeric.</p>
+                      )}
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={() => save(row.adviser_name)}
+                        disabled={!/^\d+$/.test(draft.trim()) || saving === row.adviser_name}
+                        className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {saving === row.adviser_name ? 'Saving…' : 'Save'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const UploadChanges = ({ snapshotDates = [], refreshTrigger, onCrdChange }: UploadChangesProps) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedPriorDate = searchParams.get('prior_as_of_date') || snapshotDates[1] || null;
   const selectedCurrentDate = searchParams.get('current_as_of_date') || snapshotDates[0] || null;
@@ -133,15 +265,31 @@ const UploadChanges = ({ snapshotDates = [], refreshTrigger }: UploadChangesProp
     );
   }
 
+  const crdPanel = data ? (
+    <CrdGapPanel
+      missing={data.advisers_missing_crd ?? []}
+      conflicts={data.advisers_with_conflicting_crd ?? []}
+      missingCount={data.missing_crd_count ?? (data.advisers_missing_crd ?? []).length}
+      currentDate={data.current_date}
+      onSaved={() => {
+        onCrdChange?.();
+        load();
+      }}
+    />
+  ) : null;
+
   if (error || !data || !data.has_prior) {
     return (
-      <div className="bg-white shadow rounded-lg p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-2">Upload Changes</h3>
-        <div className="mb-4">{comparisonControls}</div>
-        {error && <p className="text-sm text-red-600 mb-2">{error}</p>}
-        <p className="text-sm text-gray-500">
-          No prior upload to compare. Ingest at least two different aggregated holdings files with different as-of dates, or select two available dates.
-        </p>
+      <div className="space-y-6">
+        {data && crdPanel}
+        <div className="bg-white shadow rounded-lg p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-2">Upload Changes</h3>
+          <div className="mb-4">{comparisonControls}</div>
+          {error && <p className="text-sm text-red-600 mb-2">{error}</p>}
+          <p className="text-sm text-gray-500">
+            No prior upload to compare. Ingest at least two different aggregated holdings files with different as-of dates, or select two available dates.
+          </p>
+        </div>
       </div>
     );
   }
@@ -215,6 +363,11 @@ const UploadChanges = ({ snapshotDates = [], refreshTrigger }: UploadChangesProp
       <div className="flex justify-between items-center">
         <p className="text-sm text-gray-500">
           Comparing <strong>{formatIsoDate(data.prior_date)}</strong> (prior) vs <strong>{formatIsoDate(data.current_date)}</strong> (current).
+          <span className="ml-3 text-amber-800">
+            {(data.missing_crd_count ?? 0) === 1
+              ? '1 adviser has no CRD.'
+              : `${data.missing_crd_count ?? 0} advisers have no CRD.`}
+          </span>
         </p>
         {comparisonControls}
       </div>
@@ -300,6 +453,8 @@ const UploadChanges = ({ snapshotDates = [], refreshTrigger }: UploadChangesProp
           </div>
         </div>
       )}
+
+      {crdPanel}
 
       {/* Accounts per adviser change */}
       {data.adviser_account_changes.length > 0 && (

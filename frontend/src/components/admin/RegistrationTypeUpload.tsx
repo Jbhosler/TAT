@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { adminAPI } from '../../services/api';
 
 const RegistrationTypeUpload = () => {
@@ -17,6 +18,7 @@ const RegistrationTypeUpload = () => {
       db_accounts_with_last4: Array<{ advisor: string | null; account_display: string | null; external_model_name: string | null }>;
       hint: string;
     };
+    advisers_missing_crd?: string[];
   } | null>(null);
   const [sample, setSample] = useState<{
     sample_accounts: Array<{ advisor: string | null; account_display: string | null; external_model_name: string | null; firm: string | null }>;
@@ -193,6 +195,24 @@ const RegistrationTypeUpload = () => {
                 </p>
               )}
               <p className="italic">{result.diagnostics.hint}</p>
+            </div>
+          )}
+          {(result.advisers_missing_crd?.length ?? 0) > 0 && (
+            <div className="mt-3 pt-3 border-t border-amber-200 text-sm text-amber-900">
+              <p className="font-medium">
+                {result.advisers_missing_crd!.length} adviser{result.advisers_missing_crd!.length === 1 ? '' : 's'} still have no CRD.
+              </p>
+              <ul className="mt-1 list-disc list-inside">
+                {result.advisers_missing_crd!.map((name) => (
+                  <li key={name}>{name}</li>
+                ))}
+              </ul>
+              <Link
+                to="/monitoring?tab=uploadchanges"
+                className="mt-2 inline-block font-medium text-indigo-700 hover:text-indigo-900"
+              >
+                Enter CRDs in Monitoring → Upload Changes
+              </Link>
             </div>
           )}
         </div>

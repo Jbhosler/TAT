@@ -792,6 +792,7 @@ class AdviserInfoResponse(BaseModel):
     """GET /api/monitoring/adviser-info."""
     as_of_date: Optional[date] = None
     advisers: List[AdviserInfoItem] = []
+    missing_crd_count: int = 0
 
 
 class AdviserCrdUpdateRequest(BaseModel):
@@ -825,6 +826,15 @@ class IngestChangeAdviserItem(BaseModel):
     prior_account_count: int
     current_account_count: int
     delta: int
+
+
+class AdviserCrdGapItem(BaseModel):
+    """Adviser on the current upload who needs a CRD decision."""
+    adviser_name: str
+    account_count: int = 0
+    total_aum: Decimal = Decimal("0")
+    status: str = "missing"  # missing | conflict
+    crds: List[str] = []
 
 
 # Equivalent Review schemas
@@ -884,6 +894,9 @@ class IngestChangesResponse(BaseModel):
     removed_advisers: List[str] = []
     adviser_account_changes: List[IngestChangeAdviserItem] = []
     accounts_with_holdings_changes: List[IngestChangeAccountItem] = []  # New/removed tickers
+    missing_crd_count: int = 0
+    advisers_missing_crd: List[AdviserCrdGapItem] = []
+    advisers_with_conflicting_crd: List[AdviserCrdGapItem] = []
 
 
 # Auth schemas

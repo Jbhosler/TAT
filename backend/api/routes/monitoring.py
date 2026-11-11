@@ -74,6 +74,7 @@ from backend.api.models.schemas import (
     IngestChangesResponse,
     IngestChangeAccountItem,
     IngestChangeAdviserItem,
+    AdviserCrdGapItem,
     EquivalentReviewItem,
     EquivalentReviewMetrics,
     EquivalentReviewRefreshResponse,
@@ -375,6 +376,7 @@ async def ingest_aggregated_holdings(
     data_inconsistency_synthetic_ids: List[str] = []
     as_of_date_used: Optional[date] = None
     holding_rows: List[Dict[str, Any]] = []
+    touched_accounts: List[MonitoredAccount] = []
 
     # Pre-load existing accounts by synthetic_id to avoid N queries in the loop
     synthetic_ids = [g["synthetic_id"] for g in groups if not g.get("data_inconsistency")]
@@ -440,6 +442,7 @@ async def ingest_aggregated_holdings(
             account.firm = firm
             account.advisor = advisor
             account.account_display = account_display
+        touched_accounts.append(account)
 
         if internal_strategy_id is not None:
             # Mapped: full snapshot with rollup and holdings (use cached positions/PE)
@@ -549,6 +552,8 @@ async def ingest_aggregated_holdings(
                     "grade": None,
                 })
         ingested_count += 1
+
+    _fill_blank_adviser_crds_from_db(db, touched_accounts)
 
     if holding_rows:
         db.bulk_insert_mappings(AccountSnapshotHolding, holding_rows)
@@ -825,6 +830,141 @@ def _get_two_latest_snapshot_dates(db: Session) -> Tuple[Optional[date], Optiona
     return current, prior
 
 
+def _unique_crd_by_adviser(pairs: List[Tuple[Any, Any]]) -> Dict[str, str]:
+    """Adviser name to CRD, only when every non-blank CRD for that name agrees."""
+    grouped: Dict[str, set] = {}
+    for raw_name, raw_crd in pairs:
+        name = (raw_name or "").strip()
+        crd = (raw_crd or "").strip()
+        if not name or not crd:
+            continue
+        grouped.setdefault(name, set()).add(crd)
+    return {name: next(iter(crds)) for name, crds in grouped.items() if len(crds) == 1}
+
+
+def _fill_blank_adviser_crds(accounts: List[Any], known: Dict[str, str]) -> int:
+    """Copy a known adviser CRD onto accounts that still have a blank one."""
+    filled = 0
+    for account in accounts:
+        if (getattr(account, "advisor_crd", None) or "").strip():
+            continue
+        name = (getattr(account, "advisor", None) or "").strip()
+        crd = known.get(name)
+        if not crd:
+            continue
+        account.advisor_crd = crd
+        filled += 1
+    return filled
+
+
+def _fill_blank_adviser_crds_from_db(db: Session, accounts: List[MonitoredAccount]) -> int:
+    """Fill blank CRDs from other accounts of the same adviser when they share one CRD."""
+    names = sorted({
+        (account.advisor or "").strip()
+        for account in accounts
+        if (account.advisor or "").strip() and not (account.advisor_crd or "").strip()
+    })
+    if not names:
+        return 0
+    rows = (
+        db.query(MonitoredAccount.advisor, MonitoredAccount.advisor_crd)
+        .filter(func.trim(MonitoredAccount.advisor).in_(names))
+        .all()
+    )
+    return _fill_blank_adviser_crds(accounts, _unique_crd_by_adviser(rows))
+
+
+def _crd_gaps_from_snapshots(
+    snapshots: List[Tuple[Any, Any]],
+    account_crds: Optional[List[Tuple[Any, Any]]] = None,
+) -> Tuple[List[AdviserCrdGapItem], List[AdviserCrdGapItem]]:
+    """Split current-snapshot advisers into missing-CRD and conflicting-CRD lists.
+
+    Account counts and AUM come from the snapshot. CRDs on those accounts count,
+    and ``account_crds`` can add CRDs from accounts outside the snapshot. One
+    shared CRD means the adviser is complete, including when other accounts are blank.
+    """
+    by_name: Dict[str, Dict[str, Any]] = {}
+    for snap, acc in snapshots:
+        name = (getattr(acc, "advisor", None) or "").strip()
+        if not name:
+            continue
+        bucket = by_name.setdefault(name, {"count": 0, "aum": Decimal("0"), "crds": {}})
+        bucket["count"] += 1
+        bucket["aum"] += Decimal(str(getattr(snap, "total_value", 0) or 0))
+        crd = (getattr(acc, "advisor_crd", None) or "").strip()
+        if crd:
+            bucket["crds"][crd] = bucket["crds"].get(crd, 0) + 1
+
+    for raw_name, raw_crd in account_crds or []:
+        name = (raw_name or "").strip()
+        crd = (raw_crd or "").strip()
+        bucket = by_name.get(name)
+        if bucket is None or not crd:
+            continue
+        bucket["crds"][crd] = bucket["crds"].get(crd, 0) + 1
+
+    missing: List[AdviserCrdGapItem] = []
+    conflicts: List[AdviserCrdGapItem] = []
+    for name, bucket in by_name.items():
+        crds = sorted(bucket["crds"])
+        if len(crds) == 1:
+            continue
+        item = AdviserCrdGapItem(
+            adviser_name=name,
+            account_count=bucket["count"],
+            total_aum=bucket["aum"],
+            status="conflict" if crds else "missing",
+            crds=crds,
+        )
+        if crds:
+            conflicts.append(item)
+        else:
+            missing.append(item)
+    missing.sort(key=lambda item: (-float(item.total_aum), item.adviser_name.lower()))
+    conflicts.sort(key=lambda item: (-float(item.total_aum), item.adviser_name.lower()))
+    return missing, conflicts
+
+
+def _snapshots_for_date(db: Session, as_of: Optional[date]) -> List[Tuple[AccountSnapshot, MonitoredAccount]]:
+    if not as_of:
+        return []
+    return (
+        db.query(AccountSnapshot, MonitoredAccount)
+        .join(MonitoredAccount, AccountSnapshot.monitored_account_id == MonitoredAccount.id)
+        .filter(AccountSnapshot.as_of_date == as_of)
+        .all()
+    )
+
+
+def _account_crd_rows(db: Session, names: List[str]) -> List[Tuple[Any, Any]]:
+    if not names:
+        return []
+    return (
+        db.query(MonitoredAccount.advisor, MonitoredAccount.advisor_crd)
+        .filter(func.trim(MonitoredAccount.advisor).in_(names))
+        .all()
+    )
+
+
+def _snapshot_crd_gaps(
+    db: Session,
+    snapshots: List[Tuple[Any, Any]],
+) -> Tuple[List[AdviserCrdGapItem], List[AdviserCrdGapItem]]:
+    names = sorted({
+        (getattr(acc, "advisor", None) or "").strip()
+        for _, acc in snapshots
+        if (getattr(acc, "advisor", None) or "").strip()
+    })
+    return _crd_gaps_from_snapshots(snapshots, _account_crd_rows(db, names))
+
+
+def advisers_missing_crd_names(db: Session) -> List[str]:
+    """Adviser names on the latest snapshot with no CRD on any of their accounts."""
+    missing, _conflicts = _snapshot_crd_gaps(db, _snapshots_for_date(db, _get_latest_snapshot_date(db)))
+    return [item.adviser_name for item in missing]
+
+
 def _resolve_ingest_change_dates(
     db: Session,
     prior_as_of_date: Optional[date],
@@ -853,10 +993,14 @@ async def get_ingest_changes(
     """Compare current upload (latest as_of_date) vs prior upload. Shows new/removed accounts, material value changes (>10%), adviser changes, holdings changes."""
     prior_date, current_date = _resolve_ingest_change_dates(db, prior_as_of_date, current_as_of_date)
     if not current_date or not prior_date:
+        missing_crd, conflicting_crd = _snapshot_crd_gaps(db, _snapshots_for_date(db, current_date))
         return IngestChangesResponse(
             has_prior=False,
             current_date=current_date,
             prior_date=prior_date,
+            missing_crd_count=len(missing_crd),
+            advisers_missing_crd=missing_crd,
+            advisers_with_conflicting_crd=conflicting_crd,
         )
 
     # Accounts with snapshots for each date
@@ -974,6 +1118,7 @@ async def get_ingest_changes(
     prior_total = sum(float(s.total_value) for s, _ in prior_snapshots)
     current_total = sum(float(s.total_value) for s, _ in current_snapshots)
     aum_change_pct = ((current_total - prior_total) / prior_total * 100) if prior_total else None
+    missing_crd, conflicting_crd = _snapshot_crd_gaps(db, current_snapshots)
 
     return IngestChangesResponse(
         has_prior=True,
@@ -991,6 +1136,9 @@ async def get_ingest_changes(
         removed_advisers=removed_advisers,
         adviser_account_changes=adviser_account_changes,
         accounts_with_holdings_changes=accounts_with_holdings_changes,
+        missing_crd_count=len(missing_crd),
+        advisers_missing_crd=missing_crd,
+        advisers_with_conflicting_crd=conflicting_crd,
     )
 
 
@@ -2447,6 +2595,11 @@ def _assemble_adviser_info(
     return items
 
 
+def _count_advisers_missing_crd(advisers: List[AdviserInfoItem]) -> int:
+    """Advisers on the selected snapshot with no CRD. Conflicts still have a CRD."""
+    return sum(1 for item in advisers if item.account_count > 0 and not (item.crd or "").strip())
+
+
 @router.get("/adviser-info", response_model=AdviserInfoResponse)
 async def get_adviser_info(
     as_of_date: Optional[date] = None,
@@ -2482,9 +2635,11 @@ async def get_adviser_info(
             .group_by(name_expr)
             .all()
         )
+    advisers = _assemble_adviser_info(identity_rows, snapshot_rows)
     return AdviserInfoResponse(
         as_of_date=snapshot_date,
-        advisers=_assemble_adviser_info(identity_rows, snapshot_rows),
+        advisers=advisers,
+        missing_crd_count=_count_advisers_missing_crd(advisers),
     )
 
 

@@ -20,6 +20,14 @@ const toCsvCell = (value: unknown): string => {
   return /[",\n]/.test(escaped) ? `"${escaped}"` : escaped;
 };
 
+const MissingCrdBadge = ({ count }: { count: number }) => (
+  count > 0 ? (
+    <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+      {count}
+    </span>
+  ) : null
+);
+
 const MonitoringPage = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -72,6 +80,31 @@ const MonitoringPage = () => {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [adviserMissingCount, setAdviserMissingCount] = useState(0);
+  const [uploadMissingCount, setUploadMissingCount] = useState(0);
+  const [crdRefresh, setCrdRefresh] = useState(0);
+  const uploadCurrentDate = searchParams.get('current_as_of_date') || snapshotDates[0] || '';
+  const uploadPriorDate = searchParams.get('prior_as_of_date') || snapshotDates[1] || '';
+
+  useEffect(() => {
+    const params = selectedAsOfDate ? { as_of_date: selectedAsOfDate } : undefined;
+    monitoringAPI
+      .adviserInfo(params)
+      .then((res) => setAdviserMissingCount(res.data?.missing_crd_count ?? 0))
+      .catch(() => setAdviserMissingCount(0));
+  }, [selectedAsOfDate, crdRefresh]);
+
+  useEffect(() => {
+    const params = uploadPriorDate && uploadCurrentDate
+      ? { prior_as_of_date: uploadPriorDate, current_as_of_date: uploadCurrentDate }
+      : undefined;
+    monitoringAPI
+      .ingestChanges(params)
+      .then((res) => setUploadMissingCount(res.data?.missing_crd_count ?? 0))
+      .catch(() => setUploadMissingCount(0));
+  }, [uploadPriorDate, uploadCurrentDate, crdRefresh]);
+
+  const refreshMissingCrdCount = () => setCrdRefresh((value) => value + 1);
 
   const handleAccountSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -288,6 +321,7 @@ const MonitoringPage = () => {
               } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
             >
               Adviser Info
+              <MissingCrdBadge count={adviserMissingCount} />
             </button>
             <button
               onClick={() => setActiveTab('uploadchanges')}
@@ -298,6 +332,7 @@ const MonitoringPage = () => {
               } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
             >
               Upload Changes
+              <MissingCrdBadge count={uploadMissingCount} />
             </button>
             <button
               onClick={() => setActiveTab('unusedequivalents')}
@@ -360,8 +395,10 @@ const MonitoringPage = () => {
           {activeTab === 'heatmap' && <HeatMap asOfDate={selectedAsOfDate} />}
           {activeTab === 'concentration' && <ConcentrationReport asOfDate={selectedAsOfDate} />}
           {activeTab === 'byadviser' && <AccountDetailsByAdviser />}
-          {activeTab === 'adviserinfo' && <AdviserInfo asOfDate={selectedAsOfDate} />}
-          {activeTab === 'uploadchanges' && <UploadChanges snapshotDates={snapshotDates} />}
+          {activeTab === 'adviserinfo' && <AdviserInfo asOfDate={selectedAsOfDate} onCrdChange={refreshMissingCrdCount} />}
+          {activeTab === 'uploadchanges' && (
+            <UploadChanges snapshotDates={snapshotDates} onCrdChange={refreshMissingCrdCount} />
+          )}
           {activeTab === 'unusedequivalents' && <UnusedEquivalents asOfDate={selectedAsOfDate} />}
           {activeTab === 'equivalentreview' && <EquivalentReview />}
         </div>

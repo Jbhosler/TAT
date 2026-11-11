@@ -37,6 +37,20 @@ from backend.api.deps import CurrentUser, require_admin, require_super_admin
 router = APIRouter(dependencies=[Depends(require_admin)])
 
 
+def registration_crd_by_adviser(rows: List[Dict[str, Any]]) -> Dict[str, str]:
+    """CRDs present on a registration-type file, keyed by lower-case adviser name.
+
+    A blank CRD is omitted so an upload cannot clear a number entered by hand.
+    """
+    crd_by_adviser: Dict[str, str] = {}
+    for row in rows:
+        crd = (row.get("advisor_crd") or "").strip()
+        advisor = (row.get("advisor") or "").strip()
+        if crd and advisor:
+            crd_by_adviser[advisor.lower()] = crd
+    return crd_by_adviser
+
+
 def _run_sanity_checks(
     db: Session,
     equivalents_override: Dict[UUID, List[Dict[str, Any]]] | None = None,
@@ -662,12 +676,8 @@ async def upload_registration_type(
                     break
 
     # Fan-out CRD to every account with the same adviser name (CRD is adviser-level).
-    crd_by_adviser: Dict[str, str] = {}
-    for r in rows:
-        crd = (r.get("advisor_crd") or "").strip()
-        advisor = (r.get("advisor") or "").strip()
-        if crd and advisor:
-            crd_by_adviser[advisor.lower()] = crd
+    # Rows that omit CRD are left out, so a manual CRD is not cleared.
+    crd_by_adviser = registration_crd_by_adviser(rows)
     crd_updated = 0
     if crd_by_adviser:
         for a in db.query(MonitoredAccount).filter(MonitoredAccount.advisor.isnot(None)).all():
@@ -689,6 +699,8 @@ async def upload_registration_type(
                 resp["message"] = f"Updated Advisor CRD on {crd_updated} account(s)"
         if fallback_matched > 0:
             resp["fallback_matched"] = fallback_matched
+        from backend.api.routes.monitoring import advisers_missing_crd_names
+        resp["advisers_missing_crd"] = advisers_missing_crd_names(db)
         if updated == 0 and crd_updated == 0 and rows:
             # Diagnostics: compare file values to DB to find naming differences
             sample = rows[0]
