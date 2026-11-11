@@ -261,6 +261,9 @@ export const monitoringAPI = {
       removed_advisers: string[];
       adviser_account_changes: Array<{ adviser: string; prior_account_count: number; current_account_count: number; delta: number }>;
       accounts_with_holdings_changes: Array<{ id: string; synthetic_id: string; advisor: string | null; partial_account_number: string | null; model_name: string | null; prior_value: number | null; current_value: number | null; value_change_pct: number | null }>;
+      missing_crd_count: number;
+      advisers_missing_crd: Array<{ adviser_name: string; account_count: number; total_aum: number; status: string; crds: string[] }>;
+      advisers_with_conflicting_crd: Array<{ adviser_name: string; account_count: number; total_aum: number; status: string; crds: string[] }>;
     }>('/api/monitoring/ingest-changes', { params }),
   listAccounts: (params?: { as_of_date?: string; mapped_only?: boolean }) =>
     api.get('/api/monitoring/accounts', { params }),
@@ -370,6 +373,7 @@ export const monitoringAPI = {
         account_count: number;
         total_aum: number;
       }>;
+      missing_crd_count: number;
     }>('/api/monitoring/adviser-info', { params }),
   updateAdviserCrd: (body: { adviser_name: string; advisor_crd: string | null }) =>
     api.patch<{ adviser_name: string; advisor_crd: string | null; updated_count: number }>(

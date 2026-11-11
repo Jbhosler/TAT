@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { monitoringAPI } from '../../services/api';
 
 type AdviserInfoRow = {
@@ -13,6 +14,7 @@ type SortDir = 'asc' | 'desc';
 
 type AdviserInfoProps = {
   asOfDate?: string | null;
+  onCrdChange?: () => void;
 };
 
 const SortIcon = ({ active, dir }: { active: boolean; dir: SortDir }) => {
@@ -26,13 +28,14 @@ const formatDollars = (value: number) => {
   return `$${amount.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 };
 
-const AdviserInfo = ({ asOfDate }: AdviserInfoProps) => {
+const AdviserInfo = ({ asOfDate, onCrdChange }: AdviserInfoProps) => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const missingOnly = searchParams.get('missing_crd') === '1';
   const [rows, setRows] = useState<AdviserInfoRow[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
-  const [missingOnly, setMissingOnly] = useState(false);
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: 'total_aum', dir: 'desc' });
   const [savingName, setSavingName] = useState<string | null>(null);
   const [rowError, setRowError] = useState<Record<string, string>>({});
@@ -121,6 +124,7 @@ const AdviserInfo = ({ asOfDate }: AdviserInfoProps) => {
       );
       setDrafts((prev) => ({ ...prev, [adviserName]: saved }));
       setSavedName(adviserName);
+      onCrdChange?.();
     } catch {
       setRowError((prev) => ({ ...prev, [adviserName]: 'Could not save CRD.' }));
     } finally {
@@ -149,7 +153,15 @@ const AdviserInfo = ({ asOfDate }: AdviserInfoProps) => {
             <input
               type="checkbox"
               checked={missingOnly}
-              onChange={(e) => setMissingOnly(e.target.checked)}
+              onChange={(e) => {
+                const on = e.target.checked;
+                setSearchParams((prev) => {
+                  const next = new URLSearchParams(prev);
+                  if (on) next.set('missing_crd', '1');
+                  else next.delete('missing_crd');
+                  return next;
+                }, { replace: true });
+              }}
               className="rounded border-gray-300 text-indigo-600"
             />
             Missing CRD
