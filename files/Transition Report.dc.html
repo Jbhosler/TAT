@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&family=Libre+Franklin:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  doc-page:not(:defined){visibility:hidden}
+  a{color:#0C2340;text-decoration:none}
+  a:hover{color:#A9773F}
+</style>
+</helmet>
+<x-import component-from-global-scope="doc-page" from="./doc-page.js" size="letter" margin="0.7in" hint-size="100%,100%">
+
+<div slot="footer" style="display:flex;justify-content:space-between;align-items:center;font-family:'Libre Franklin',sans-serif;font-size:9.5px;letter-spacing:0.03em;color:#8A93A0;border-top:1px solid rgba(12,35,64,0.14);padding-top:6px">
+  <span>For Investment Professional Use Only. Not for distribution to the public.</span>
+  <span style="color:#0C2340;font-weight:600">Auour Investments</span>
+</div>
+
+<div style="font-family:'Libre Franklin',sans-serif;color:#0C2340;font-size:13px;line-height:1.6;font-variant-numeric:tabular-nums">
+
+  <!-- ===== COVER ===== -->
+  <header>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start">
+      <div style="display:flex;align-items:center;gap:14px">
+        <div>
+          <div style="font-family:Newsreader,serif;font-size:19px;font-weight:500;letter-spacing:0.01em;line-height:1">Auour Investments</div>
+          <div style="font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:#8A93A0;margin-top:3px">Boston, Massachusetts · Est. 2013</div>
+        </div>
+      </div>
+      <div style="text-align:right;font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:#A9773F;font-weight:600;padding-top:6px">Confidential</div>
+    </div>
+
+    <div style="margin-top:58px">
+      <div style="font-family:Newsreader,serif;font-size:13px;letter-spacing:0.16em;text-transform:uppercase;color:#A9773F">Auour Global Equity Strategy</div>
+      <h1 style="font-family:Newsreader,serif;font-weight:500;font-size:54px;line-height:1.02;margin:12px 0 0;color:#0C2340">Transition <span style="font-style:italic">Report</span></h1>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:44px;padding-top:20px;border-top:1px solid rgba(12,35,64,0.18)">
+      <div>
+        <div style="font-size:9.5px;letter-spacing:0.12em;text-transform:uppercase;color:#8A93A0;margin-bottom:6px">Prospect</div>
+        <div style="font-family:Newsreader,serif;font-size:16px;color:#0C2340">The Rhodes Living Trust — A. Crabbe</div>
+      </div>
+      <div>
+        <div style="font-size:9.5px;letter-spacing:0.12em;text-transform:uppercase;color:#8A93A0;margin-bottom:6px">Strategy</div>
+        <div style="font-family:Newsreader,serif;font-size:16px;color:#0C2340">Auour Global Equity</div>
+      </div>
+      <div>
+        <div style="font-size:9.5px;letter-spacing:0.12em;text-transform:uppercase;color:#8A93A0;margin-bottom:6px">Report Date</div>
+        <div style="font-family:Newsreader,serif;font-size:16px;color:#0C2340">June 24, 2026</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===== SECTION 1 ===== -->
+  <section style="margin-top:48px">
+    <div style="display:flex;align-items:baseline;gap:14px;margin-bottom:22px;padding-bottom:10px;border-bottom:1px solid rgba(12,35,64,0.18)">
+      <span style="font-family:Newsreader,serif;font-size:15px;color:#A9773F;font-weight:600;letter-spacing:0.04em">01</span>
+      <h2 style="font-family:Newsreader,serif;font-weight:500;font-size:24px;margin:0;color:#0C2340">Portfolio Impact Summary</h2>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:26px">
+      <div style="border:1px solid rgba(12,35,64,0.14);padding:16px 16px 18px">
+        <div style="font-size:9.5px;letter-spacing:0.11em;text-transform:uppercase;color:#8A93A0;margin-bottom:10px">Net Realized Gain / Loss</div>
+        <div style="font-family:Newsreader,serif;font-size:29px;color:#0C2340;line-height:1">$52,494</div>
+        <div style="font-size:11px;color:#6B7688;margin-top:9px;line-height:1.4">Tax realization from proposed trades</div>
+      </div>
+      <div style="border:1px solid rgba(12,35,64,0.14);padding:16px 16px 18px">
+        <div style="font-size:9.5px;letter-spacing:0.11em;text-transform:uppercase;color:#8A93A0;margin-bottom:10px">Unrealized — Current</div>
+        <div style="font-family:Newsreader,serif;font-size:29px;color:#0C2340;line-height:1">$219,126</div>
+        <div style="font-size:11px;color:#6B7688;margin-top:9px;line-height:1.4">Unrealized amount before transition</div>
+      </div>
+      <div style="border:1px solid rgba(12,35,64,0.14);padding:16px 16px 18px;background:#F5F7FA">
+        <div style="font-size:9.5px;letter-spacing:0.11em;text-transform:uppercase;color:#8A93A0;margin-bottom:10px">Gain Retention Rate</div>
+        <div style="font-family:Newsreader,serif;font-size:29px;color:#2F6B4F;font-weight:600;line-height:1">76.0%</div>
+        <div style="font-size:11px;color:#6B7688;margin-top:9px;line-height:1.4">Share of current unrealized gain deferred (100% − $52,494 ÷ $219,126)</div>
+      </div>
+    </div>
+
+    <p style="margin:0 0 14px;text-wrap:pretty">Based on the portfolio analysis, the current allocation is heavily concentrated in U.S. growth-oriented equities, with particularly large exposures to technology, artificial intelligence, and semiconductor-related investments. Technology alone represents approximately <strong style="font-weight:600">46% of the equity allocation</strong>, while thematic exposures tied to artificial intelligence and semiconductors account for a significant portion of the portfolio's overall risk profile. The portfolio also exhibits a strong growth bias and relatively limited diversification across investment styles, sectors, and global markets.</p>
+
+    <p style="margin:0 0 14px;text-wrap:pretty">Our recommendation is to transition the portfolio to the <strong style="font-weight:600">Auour Global Equity Strategy</strong>. While the strategy remains focused on long-term capital appreciation, it seeks to achieve that objective through broader diversification across regions, sectors, and investment factors. Rather than relying heavily on a narrow group of companies and themes to drive returns, the Global Equity Strategy is designed to participate in opportunities across a wider range of global markets and economic environments. This diversification can help reduce the portfolio's dependence on any single investment trend or market outcome.</p>
+
+    <blockquote style="margin:22px 0;padding:4px 0 4px 22px;border-left:2px solid #A9773F;font-family:Newsreader,serif;font-size:17px;font-style:italic;line-height:1.5;color:#243B54">The recommendation should not be viewed as a reduction in confidence regarding technology or artificial intelligence. Instead, it reflects a desire to manage risk prudently after a period in which a relatively small group of companies has generated exceptional returns and now trades at elevated valuations.</blockquote>
+
+    <p style="margin:0;text-wrap:pretty">The current portfolio's concentration in these areas increases the potential impact of any future disappointment in earnings growth, competitive positioning, or investor sentiment. By broadening exposures and reducing concentration risk, we believe the Global Equity Strategy offers a more balanced approach to pursuing long-term growth while improving the portfolio's resilience across a wider range of market conditions.</p>
+  </section>
+
+  <!-- ===== SECTION 2 ===== -->
+  <section style="margin-top:44px;break-before:page">
+    <div style="display:flex;align-items:baseline;gap:14px;margin-bottom:22px;padding-bottom:10px;border-bottom:1px solid rgba(12,35,64,0.18)">
+      <span style="font-family:Newsreader,serif;font-size:15px;color:#A9773F;font-weight:600;letter-spacing:0.04em">02</span>
+      <h2 style="font-family:Newsreader,serif;font-weight:500;font-size:24px;margin:0;color:#0C2340">Target Model Portfolio</h2>
+    </div>
+
+    <div style="font-size:9.5px;letter-spacing:0.11em;text-transform:uppercase;color:#8A93A0;margin-bottom:9px">Target Allocation</div>
+    <div style="display:flex;height:30px;border:1px solid rgba(12,35,64,0.14);margin-bottom:10px;overflow:hidden">
+      <sc-for list="{{ targetSegs }}" as="seg" hint-placeholder-count="10">
+        <div style="{{ seg.style }}"></div>
+      </sc-for>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:12px 18px;margin-bottom:26px">
+      <sc-for list="{{ targetSegs }}" as="seg" hint-placeholder-count="10">
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#3A4A5F">
+          <span style="{{ seg.chip }}"></span>{{ seg.label }}
+        </div>
+      </sc-for>
+    </div>
+
+    <table style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr>
+          <th style="text-align:left;font-size:10px;letter-spacing:0.06em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340">Model Ticker</th>
+          <th style="text-align:left;font-size:10px;letter-spacing:0.06em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340">Asset Class</th>
+          <th style="text-align:right;font-size:10px;letter-spacing:0.06em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340">Target %</th>
+          <th style="text-align:right;font-size:10px;letter-spacing:0.06em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340">Drift %</th>
+        </tr>
+      </thead>
+      <tbody>
+        <sc-for list="{{ targetRows }}" as="row" hint-placeholder-count="10">
+          <tr>
+            <td style="padding:7px 10px;border-bottom:1px solid rgba(12,35,64,0.10);font-size:13px;font-weight:600;color:#0C2340">{{ row.ticker }}</td>
+            <td style="padding:7px 10px;border-bottom:1px solid rgba(12,35,64,0.10);font-size:13px;color:#3A4A5F">{{ row.ac }}</td>
+            <td style="padding:7px 10px;border-bottom:1px solid rgba(12,35,64,0.10);font-size:13px;text-align:right">{{ row.target }}</td>
+            <td style="padding:7px 10px;border-bottom:1px solid rgba(12,35,64,0.10);font-size:13px;text-align:right;color:#8A93A0">{{ row.drift }}</td>
+          </tr>
+        </sc-for>
+        <tr style="background:#EEF1F6;font-weight:600">
+          <td style="padding:8px 10px;font-size:13px;color:#0C2340">Total</td>
+          <td style="padding:8px 10px"></td>
+          <td style="padding:8px 10px;font-size:13px;text-align:right;color:#0C2340">100.00%</td>
+          <td style="padding:8px 10px"></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ===== SECTION 3 ===== -->
+  <section style="margin-top:44px;break-before:page">
+    <div style="display:flex;align-items:baseline;gap:14px;margin-bottom:22px;padding-bottom:10px;border-bottom:1px solid rgba(12,35,64,0.18)">
+      <span style="font-family:Newsreader,serif;font-size:15px;color:#A9773F;font-weight:600;letter-spacing:0.04em">03</span>
+      <h2 style="font-family:Newsreader,serif;font-weight:500;font-size:24px;margin:0;color:#0C2340">Current vs. Proposed by Asset Class</h2>
+    </div>
+
+    <div style="display:flex;gap:22px;margin-bottom:20px;font-size:11px;color:#3A4A5F">
+      <div style="display:flex;align-items:center;gap:7px"><span style="width:13px;height:9px;background:#0C2340;display:inline-block"></span>Current</div>
+      <div style="display:flex;align-items:center;gap:7px"><span style="width:13px;height:9px;background:#A9773F;display:inline-block"></span>Proposed</div>
+    </div>
+
+    <div style="margin-bottom:8px">
+      <sc-for list="{{ compareRows }}" as="row" hint-placeholder-count="11">
+        <div style="display:grid;grid-template-columns:170px 1fr;gap:16px;align-items:center;padding:8px 0;border-bottom:1px solid rgba(12,35,64,0.08)">
+          <div style="font-size:12px;color:#0C2340;font-weight:500">{{ row.name }}</div>
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="flex:1;height:9px;background:#F0F2F6;position:relative">
+                <div style="{{ row.curW }}"></div>
+              </div>
+              <div style="width:46px;text-align:right;font-size:11px;color:#3A4A5F">{{ row.curLbl }}</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="flex:1;height:9px;background:#F0F2F6;position:relative">
+                <div style="{{ row.propW }}"></div>
+              </div>
+              <div style="width:46px;text-align:right;font-size:11px;color:#3A4A5F">{{ row.propLbl }}</div>
+            </div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <p style="font-size:11px;color:#8A93A0;margin:14px 0 0">Forced Sale and individual securities in the current portfolio (18.5%) are liquidated and redeployed across international, emerging-market, mid-cap, small-cap, and tactical-cash sleeves in the proposed allocation.</p>
+  </section>
+
+  <!-- ===== SECTION 3 DETAIL: HOLDINGS ===== -->
+  <section style="margin-top:44px;break-before:page">
+    <div style="display:flex;align-items:baseline;gap:14px;margin-bottom:6px;padding-bottom:10px;border-bottom:1px solid rgba(12,35,64,0.18)">
+      <span style="font-family:Newsreader,serif;font-size:15px;color:#A9773F;font-weight:600;letter-spacing:0.04em">03</span>
+      <h2 style="font-family:Newsreader,serif;font-weight:500;font-size:24px;margin:0;color:#0C2340">Holdings Detail</h2>
+    </div>
+
+    <div style="font-family:Newsreader,serif;font-size:15px;font-style:italic;color:#243B54;margin:24px 0 8px">Current portfolio <span style="font-style:normal;font-size:11px;color:#8A93A0">(includes side pocket)</span></div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr>
+          <th style="text-align:left;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340">Ticker</th>
+          <th style="text-align:left;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340">Asset Class</th>
+          <th style="text-align:right;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340">Value ($)</th>
+          <th style="text-align:right;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340">Unrealized ($)</th>
+          <th style="text-align:right;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340">% Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        <sc-for list="{{ currentRows }}" as="row" hint-placeholder-count="16">
+          <tr style="{{ row.rowStyle }}">
+            <td style="padding:6px 10px;border-bottom:1px solid rgba(12,35,64,0.08);font-size:12.5px;font-weight:600;color:#0C2340">{{ row.ticker }}</td>
+            <td style="padding:6px 10px;border-bottom:1px solid rgba(12,35,64,0.08);font-size:12.5px;color:#3A4A5F">{{ row.ac }}</td>
+            <td style="padding:6px 10px;border-bottom:1px solid rgba(12,35,64,0.08);font-size:12.5px;text-align:right">{{ row.valueF }}</td>
+            <td style="padding:6px 10px;border-bottom:1px solid rgba(12,35,64,0.08);font-size:12.5px;text-align:right"><span style="{{ row.uStyle }}">{{ row.unrealF }}</span></td>
+            <td style="padding:6px 10px;border-bottom:1px solid rgba(12,35,64,0.08);font-size:12.5px;text-align:right;color:#3A4A5F">{{ row.pct }}</td>
+          </tr>
+        </sc-for>
+      </tbody>
+    </table>
+
+    <div style="font-family:Newsreader,serif;font-size:15px;font-style:italic;color:#243B54;margin:30px 0 8px">Proposed portfolio</div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr>
+          <th style="text-align:left;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340">Ticker</th>
+          <th style="text-align:left;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340">Asset Class</th>
+          <th style="text-align:right;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340">Value ($)</th>
+          <th style="text-align:right;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340">Unrealized ($)</th>
+          <th style="text-align:right;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340">% Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        <sc-for list="{{ proposedRows }}" as="row" hint-placeholder-count="23">
+          <tr style="{{ row.rowStyle }}">
+            <td style="padding:6px 10px;border-bottom:1px solid rgba(12,35,64,0.08);font-size:12.5px;font-weight:600;color:#0C2340">{{ row.ticker }}</td>
+            <td style="padding:6px 10px;border-bottom:1px solid rgba(12,35,64,0.08);font-size:12.5px;color:#3A4A5F">{{ row.ac }}</td>
+            <td style="padding:6px 10px;border-bottom:1px solid rgba(12,35,64,0.08);font-size:12.5px;text-align:right">{{ row.valueF }}</td>
+            <td style="padding:6px 10px;border-bottom:1px solid rgba(12,35,64,0.08);font-size:12.5px;text-align:right"><span style="{{ row.uStyle }}">{{ row.unrealF }}</span></td>
+            <td style="padding:6px 10px;border-bottom:1px solid rgba(12,35,64,0.08);font-size:12.5px;text-align:right;color:#3A4A5F">{{ row.pct }}</td>
+          </tr>
+        </sc-for>
+      </tbody>
+    </table>
+    <p style="font-size:10.5px;color:#8A93A0;margin:12px 0 0">Totals are rounded to whole dollars; small rounding differences may occur.</p>
+  </section>
+
+  <!-- ===== SECTION 4: TRADE LIST ===== -->
+  <!-- ===== SECTION 4: THINGS TO NOTE ===== -->
+  <section style="margin-top:44px;break-before:page">
+    <div style="display:flex;align-items:baseline;gap:14px;margin-bottom:22px;padding-bottom:10px;border-bottom:1px solid rgba(12,35,64,0.18)">
+      <span style="font-family:Newsreader,serif;font-size:15px;color:#A9773F;font-weight:600;letter-spacing:0.04em">04</span>
+      <h2 style="font-family:Newsreader,serif;font-weight:500;font-size:24px;margin:0;color:#0C2340">Things to Note</h2>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:20px">
+      <div>
+        <div style="font-family:Newsreader,serif;font-size:16px;color:#0C2340;margin-bottom:6px">Point-in-Time Estimate</div>
+        <p style="margin:0;text-wrap:pretty">Figures and calculations reflect a snapshot as of the date of this analysis. Anticipated gain realization is an estimate and subject to fluctuation based on market movement, execution timing, and pricing changes prior to trade date.</p>
+      </div>
+      <div>
+        <div style="font-family:Newsreader,serif;font-size:16px;color:#0C2340;margin-bottom:6px">Risk Priority Over Tax Efficiency</div>
+        <p style="margin:0;text-wrap:pretty">A shift in market risk per our risk models may trigger a rebalance independent of this transition schedule, likely generating an additional taxable event. Principal protection supersedes tax minimization in all cases.</p>
+      </div>
+      <div>
+        <div style="font-family:Newsreader,serif;font-size:16px;color:#0C2340;margin-bottom:6px">Prior Transactions Excluded</div>
+        <p style="margin:0;text-wrap:pretty">YTD transactions executed prior to this transition are not reflected in these calculations. Actual client tax liability may exceed the estimate shown.</p>
+      </div>
+      <div>
+        <div style="font-family:Newsreader,serif;font-size:16px;color:#0C2340;margin-bottom:6px">Share Class Illustrative Only</div>
+        <p style="margin:0;text-wrap:pretty">Share classes displayed (e.g., A, C) are for illustrative purposes and do not reflect end-state holdings. Non-institutional share classes must be converted to institutional class prior to transition for advisory eligibility. Conversion is a non-taxable event.</p>
+      </div>
+      <div>
+        <div style="font-family:Newsreader,serif;font-size:16px;color:#0C2340;margin-bottom:6px">Legacy Mutual Fund Distributions</div>
+        <p style="margin:0;text-wrap:pretty">Where legacy mutual funds are held in place of preferred ETFs, clients may incur additional taxable distributions (e.g., capital gains, dividend, or income distributions) generated by the fund itself. These distributions are outside our control, are not reflected in this transition's estimated tax impact, and may result in tax liability beyond what is shown here.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SECTION 5: TRADE ORDER EXECUTION ===== -->
+  <section style="margin-top:44px;break-before:page">
+    <div style="display:flex;align-items:baseline;gap:14px;margin-bottom:22px;padding-bottom:10px;border-bottom:1px solid rgba(12,35,64,0.18)">
+      <span style="font-family:Newsreader,serif;font-size:15px;color:#A9773F;font-weight:600;letter-spacing:0.04em">05</span>
+      <h2 style="font-family:Newsreader,serif;font-weight:500;font-size:24px;margin:0;color:#0C2340">Trade Order Execution List</h2>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:9px;margin:0 0 8px">
+      <span style="font-family:Newsreader,serif;font-size:16px;color:#B23A2E">Sells</span>
+      <span style="flex:1;height:1px;background:rgba(12,35,64,0.14)"></span>
+    </div>
+    <table style="width:100%;border-collapse:collapse;margin-bottom:28px">
+      <thead>
+        <tr>
+          <th style="text-align:left;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340;width:90px">Ticker</th>
+          <th style="text-align:right;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340;width:130px">Amount ($)</th>
+          <th style="text-align:left;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340">Reasoning</th>
+        </tr>
+      </thead>
+      <tbody>
+        <sc-for list="{{ sells }}" as="row" hint-placeholder-count="8">
+          <tr>
+            <td style="padding:7px 10px;border-bottom:1px solid rgba(12,35,64,0.08);font-size:13px;font-weight:600;color:#0C2340">{{ row.ticker }}</td>
+            <td style="padding:7px 10px;border-bottom:1px solid rgba(12,35,64,0.08);font-size:13px;text-align:right">{{ row.amount }}</td>
+            <td style="padding:7px 10px;border-bottom:1px solid rgba(12,35,64,0.08);font-size:12.5px;color:#3A4A5F">{{ row.reason }}</td>
+          </tr>
+        </sc-for>
+      </tbody>
+    </table>
+
+    <div style="display:flex;align-items:center;gap:9px;margin:0 0 8px">
+      <span style="font-family:Newsreader,serif;font-size:16px;color:#2F6B4F">Buys</span>
+      <span style="flex:1;height:1px;background:rgba(12,35,64,0.14)"></span>
+    </div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr>
+          <th style="text-align:left;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340;width:90px">Ticker</th>
+          <th style="text-align:right;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340;width:130px">Amount ($)</th>
+          <th style="text-align:left;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340">Reasoning</th>
+        </tr>
+      </thead>
+      <tbody>
+        <sc-for list="{{ buys }}" as="row" hint-placeholder-count="7">
+          <tr>
+            <td style="padding:7px 10px;border-bottom:1px solid rgba(12,35,64,0.08);font-size:13px;font-weight:600;color:#0C2340">{{ row.ticker }}</td>
+            <td style="padding:7px 10px;border-bottom:1px solid rgba(12,35,64,0.08);font-size:13px;text-align:right">{{ row.amount }}</td>
+            <td style="padding:7px 10px;border-bottom:1px solid rgba(12,35,64,0.08);font-size:12.5px;color:#3A4A5F">{{ row.reason }}</td>
+          </tr>
+        </sc-for>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ===== SECTION 6: MAPPINGS ===== -->
+  <section style="margin-top:44px">
+    <div style="display:flex;align-items:baseline;gap:14px;margin-bottom:22px;padding-bottom:10px;border-bottom:1px solid rgba(12,35,64,0.18)">
+      <span style="font-family:Newsreader,serif;font-size:15px;color:#A9773F;font-weight:600;letter-spacing:0.04em">06</span>
+      <h2 style="font-family:Newsreader,serif;font-weight:500;font-size:24px;margin:0;color:#0C2340">Product Equivalent Mappings</h2>
+    </div>
+
+    <div style="background:#FBF5EA;border:1px solid rgba(169,119,63,0.4);border-left:3px solid #A9773F;padding:13px 16px;margin-bottom:22px;font-size:12px;line-height:1.5;color:#5C4A2E">
+      <strong style="font-weight:600;color:#A9773F">Action required.</strong> 5 mapping(s) used in this proposal are not in the strategy product equivalents file. Add these pairs in <span style="font-weight:600">Admin → Product Equivalents</span> or confirm the manual mapping was intentional.
+    </div>
+
+    <table style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr>
+          <th style="text-align:left;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340">Legacy</th>
+          <th style="text-align:left;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340">Model</th>
+          <th style="text-align:left;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340">Grade</th>
+          <th style="text-align:left;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;color:#6B7688;font-weight:600;padding:0 10px 8px;border-bottom:1.5px solid #0C2340">How Mapped</th>
+        </tr>
+      </thead>
+      <tbody>
+        <sc-for list="{{ mappings }}" as="row" hint-placeholder-count="5">
+          <tr>
+            <td style="padding:7px 10px;border-bottom:1px solid rgba(12,35,64,0.08);font-size:13px;font-weight:600;color:#0C2340">{{ row.legacy }}</td>
+            <td style="padding:7px 10px;border-bottom:1px solid rgba(12,35,64,0.08);font-size:13px;font-weight:600;color:#0C2340">{{ row.model }}</td>
+            <td style="padding:7px 10px;border-bottom:1px solid rgba(12,35,64,0.08);font-size:13px;color:#3A4A5F">{{ row.grade }}</td>
+            <td style="padding:7px 10px;border-bottom:1px solid rgba(12,35,64,0.08);font-size:12.5px;color:#3A4A5F">{{ row.how }}</td>
+          </tr>
+        </sc-for>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ===== ADDITIONAL DISCLOSURES ===== -->
+  <section style="margin-top:40px;padding-top:16px;border-top:1px solid rgba(12,35,64,0.14)">
+    <div style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:#8A93A0;font-weight:600;margin-bottom:8px">Additional Disclosures</div>
+    <p style="margin:0;font-size:9.5px;line-height:1.55;color:#8A93A0">This analysis is provided for informational purposes only and does not constitute tax or legal advice. Advisors should direct clients to consult their own tax or legal counsel regarding their specific situation. Estimated tax impact is derived from cost basis and holding period data as provided by custodian(s); accuracy is not independently verified, and discrepancies in custodial data will affect output. Short-term/long-term classification reflects holding period as of the analysis date and is subject to change if the transition timeline shifts. This output does not include and should not be construed as investment performance or return data. This analysis is hypothetical and for planning purposes only; it does not constitute a recommendation or reflect an executed transaction.</p>
+  </section>
+
+</div>
+</x-import>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    const money = n => n.toLocaleString('en-US');
+    const uStyle = n => {
+      if (n > 0) return { color: '#2F6B4F' };
+      if (n < 0) return { color: '#B23A2E' };
+      return { color: '#9AA3B0' };
+    };
+    const subStyle = { background: '#EEF1F6', fontWeight: 600, color: '#0C2340' };
+
+    const mapHolding = r => ({
+      ticker: r.ticker,
+      ac: r.ac,
+      pct: r.pct,
+      valueF: r.value === 0 ? '—' : money(r.value),
+      unrealF: r.unreal === 0 ? '—' : money(r.unreal),
+      uStyle: uStyle(r.unreal),
+      rowStyle: r.kind === 's' ? subStyle : {},
+    });
+
+    const currentRaw = [
+      { ticker: 'FNIAX', ac: 'US Large Core', value: 129783, unreal: 41746, pct: '20.7%', kind: 'h' },
+      { ticker: 'FAGAX', ac: 'US Large Core', value: 153682, unreal: 93520, pct: '24.5%', kind: 'h' },
+      { ticker: '', ac: 'US Large Core subtotal', value: 283465, unreal: 135266, pct: '45.3%', kind: 's' },
+      { ticker: 'FCPAX', ac: 'International Developed', value: 31267, unreal: 13567, pct: '5.0%', kind: 'h' },
+      { ticker: '', ac: 'International Developed subtotal', value: 31267, unreal: 13567, pct: '5.0%', kind: 's' },
+      { ticker: 'FASDX', ac: 'US Large Value', value: 65048, unreal: 11824, pct: '10.4%', kind: 'h' },
+      { ticker: '', ac: 'US Large Value subtotal', value: 65048, unreal: 11824, pct: '10.4%', kind: 's' },
+      { ticker: 'FFONX', ac: 'US Large Growth', value: 115905, unreal: 65334, pct: '18.5%', kind: 'h' },
+      { ticker: '', ac: 'US Large Growth subtotal', value: 115905, unreal: 65334, pct: '18.5%', kind: 's' },
+      { ticker: 'CASH', ac: 'Cash', value: 14585, unreal: 0, pct: '2.3%', kind: 'h' },
+      { ticker: '', ac: 'Cash subtotal', value: 14585, unreal: 0, pct: '2.3%', kind: 's' },
+      { ticker: 'FEPAX', ac: 'Forced Sale', value: 40162, unreal: -4854, pct: '6.4%', kind: 'h' },
+      { ticker: 'FCBAX', ac: 'Forced Sale', value: 14633, unreal: -2120, pct: '2.3%', kind: 'h' },
+      { ticker: 'FSTAX', ac: 'Forced Sale', value: 29871, unreal: -323, pct: '4.8%', kind: 'h' },
+      { ticker: 'FACDX', ac: 'Forced Sale', value: 31173, unreal: 432, pct: '5.0%', kind: 'h' },
+      { ticker: '', ac: 'Forced Sale subtotal', value: 115839, unreal: -6865, pct: '18.5%', kind: 's' },
+    ];
+
+    const proposedRaw = [
+      { ticker: 'FNIAX', ac: 'US Large Core', value: 74097, unreal: 23834, pct: '11.8%', kind: 'h' },
+      { ticker: 'FAGAX', ac: 'US Large Core', value: 153682, unreal: 93520, pct: '24.5%', kind: 'h' },
+      { ticker: '', ac: 'US Large Core subtotal', value: 227779, unreal: 117354, pct: '36.4%', kind: 's' },
+      { ticker: 'FCPAX', ac: 'International Developed', value: 31267, unreal: 13567, pct: '5.0%', kind: 'h' },
+      { ticker: 'SPDW', ac: 'International Developed', value: 140910, unreal: 0, pct: '22.5%', kind: 'h' },
+      { ticker: '', ac: 'International Developed subtotal', value: 172177, unreal: 13567, pct: '27.5%', kind: 's' },
+      { ticker: 'FASDX', ac: 'US Large Value', value: 50842, unreal: 9242, pct: '8.1%', kind: 'h' },
+      { ticker: '', ac: 'US Large Value subtotal', value: 50842, unreal: 9242, pct: '8.1%', kind: 's' },
+      { ticker: 'BIL', ac: 'Tactical Cash', value: 50088, unreal: 0, pct: '8.0%', kind: 'h' },
+      { ticker: '', ac: 'Tactical Cash subtotal', value: 50088, unreal: 0, pct: '8.0%', kind: 's' },
+      { ticker: 'FFONX', ac: 'US Large Growth', value: 46958, unreal: 26469, pct: '7.5%', kind: 'h' },
+      { ticker: 'SPYG', ac: 'US Large Growth', value: 0, unreal: 0, pct: '—', kind: 'h' },
+      { ticker: '', ac: 'US Large Growth subtotal', value: 46958, unreal: 26469, pct: '7.5%', kind: 's' },
+      { ticker: 'VWO', ac: 'Emerging Markets', value: 23479, unreal: 0, pct: '3.7%', kind: 'h' },
+      { ticker: '', ac: 'Emerging Markets subtotal', value: 23479, unreal: 0, pct: '3.7%', kind: 's' },
+      { ticker: 'IWP', ac: 'US Midcap Growth', value: 14087, unreal: 0, pct: '2.2%', kind: 'h' },
+      { ticker: '', ac: 'US Midcap Growth subtotal', value: 14087, unreal: 0, pct: '2.2%', kind: 's' },
+      { ticker: 'IWS', ac: 'US Midcap Value', value: 14087, unreal: 0, pct: '2.2%', kind: 'h' },
+      { ticker: '', ac: 'US Midcap Value subtotal', value: 14087, unreal: 0, pct: '2.2%', kind: 's' },
+      { ticker: 'IWM', ac: 'US Small Cap', value: 14087, unreal: 0, pct: '2.2%', kind: 'h' },
+      { ticker: '', ac: 'US Small Cap subtotal', value: 14087, unreal: 0, pct: '2.2%', kind: 's' },
+      { ticker: 'CASH', ac: 'Cash', value: 12525, unreal: 0, pct: '2.0%', kind: 'h' },
+      { ticker: '', ac: 'Cash subtotal', value: 12525, unreal: 0, pct: '2.0%', kind: 's' },
+    ];
+
+    // Target model + stacked allocation bar
+    const palette = ['#0C2340', '#1E3F5F', '#2F587A', '#436F93', '#5987AC', '#7AA0C0', '#9CB8D2', '#BDD0E1', '#A9773F', '#C8A268'];
+    const targetRaw = [
+      { ticker: 'SPYM', ac: 'US Large Core', target: 36.38 },
+      { ticker: 'SPDW', ac: 'International Developed', target: 27.50 },
+      { ticker: 'SPYV', ac: 'US Large Value', target: 8.12 },
+      { ticker: 'BIL', ac: 'Tactical Cash', target: 8.00 },
+      { ticker: 'SPYG', ac: 'US Large Growth', target: 7.50 },
+      { ticker: 'VWO', ac: 'Emerging Markets', target: 3.75 },
+      { ticker: 'IWP', ac: 'US Midcap Growth', target: 2.25 },
+      { ticker: 'IWS', ac: 'US Midcap Value', target: 2.25 },
+      { ticker: 'IWM', ac: 'US Small Cap', target: 2.25 },
+      { ticker: 'CASH', ac: 'Cash', target: 2.00 },
+    ];
+    const targetRows = targetRaw.map(r => ({
+      ticker: r.ticker, ac: r.ac, target: r.target.toFixed(2) + '%', drift: '±3.00%',
+    }));
+    const targetSegs = targetRaw.map((r, i) => ({
+      style: { width: r.target + '%', background: palette[i], borderRight: i < targetRaw.length - 1 ? '1px solid #fff' : 'none' },
+      chip: { width: '11px', height: '11px', background: palette[i], display: 'inline-block' },
+      label: r.ac + ' ' + r.target.toFixed(2) + '%',
+    }));
+
+    // Asset-class comparison
+    const compareRaw = [
+      { name: 'US Large Core', cur: 45.3, prop: 36.4 },
+      { name: 'International Developed', cur: 5.0, prop: 27.5 },
+      { name: 'US Large Value', cur: 10.4, prop: 8.1 },
+      { name: 'Tactical Cash', cur: 0, prop: 8.0 },
+      { name: 'US Large Growth', cur: 18.5, prop: 7.5 },
+      { name: 'Emerging Markets', cur: 0, prop: 3.7 },
+      { name: 'US Midcap Growth', cur: 0, prop: 2.2 },
+      { name: 'US Midcap Value', cur: 0, prop: 2.2 },
+      { name: 'US Small Cap', cur: 0, prop: 2.2 },
+      { name: 'Cash', cur: 2.3, prop: 2.0 },
+      { name: 'Forced Sale', cur: 18.5, prop: 0 },
+    ];
+    // Largest weight (current or proposed) fills the track; the rest scale against it.
+    const scale = Math.max(...compareRaw.flatMap(a => [a.cur, a.prop]));
+    const compareRows = compareRaw.map(a => ({
+      name: a.name,
+      curW: { width: (a.cur / scale * 100) + '%', height: '9px', background: '#0C2340' },
+      propW: { width: (a.prop / scale * 100) + '%', height: '9px', background: '#A9773F' },
+      curLbl: a.cur === 0 ? '—' : a.cur.toFixed(1) + '%',
+      propLbl: a.prop === 0 ? '—' : a.prop.toFixed(1) + '%',
+    }));
+
+    const sells = [
+      { ticker: 'FEPAX', amount: '40,162', reason: 'Liquidated Grade 2 asset' },
+      { ticker: 'FCBAX', amount: '14,633', reason: 'Liquidated Grade 2 asset' },
+      { ticker: 'FSTAX', amount: '29,871', reason: 'Liquidated Grade 2 asset' },
+      { ticker: 'FACDX', amount: '31,173', reason: 'Liquidated Grade 2 asset' },
+      { ticker: 'CASH', amount: '2,060', reason: 'Liquidated Grade 0 (Model) asset' },
+      { ticker: 'FASDX', amount: '14,206', reason: 'Liquidated Grade 1 equivalent' },
+      { ticker: 'FNIAX', amount: '55,686', reason: 'Liquidated Grade 2 asset' },
+      { ticker: 'FFONX', amount: '68,947', reason: 'Liquidated Grade 2 asset' },
+    ];
+    const buys = [
+      { ticker: 'VWO', amount: '23,479', reason: 'Rebalance to Emerging Markets' },
+      { ticker: 'SPDW', amount: '140,910', reason: 'Rebalance to International Developed' },
+      { ticker: 'SPYG', amount: '0', reason: 'Rebalance to US Large Growth' },
+      { ticker: 'IWP', amount: '14,087', reason: 'Rebalance to US Midcap Growth' },
+      { ticker: 'IWS', amount: '14,087', reason: 'Rebalance to US Midcap Value' },
+      { ticker: 'IWM', amount: '14,087', reason: 'Rebalance to US Small Cap' },
+      { ticker: 'BIL', amount: '50,088', reason: 'Rebalance to Tactical Cash' },
+    ];
+    const mappings = [
+      { legacy: 'FAGAX', model: 'SPYM', grade: '1', how: 'Set on proposal (manual)' },
+      { legacy: 'FASDX', model: 'SPYV', grade: '1', how: 'Set on proposal (manual)' },
+      { legacy: 'FCPAX', model: 'SPDW', grade: '1', how: 'Set on proposal (manual)' },
+      { legacy: 'FFONX', model: 'SPYG', grade: '2', how: 'Set on proposal (manual)' },
+      { legacy: 'FNIAX', model: 'SPYM', grade: '2', how: 'Set on proposal (manual)' },
+    ];
+
+    return {
+      currentRows: currentRaw.map(mapHolding),
+      proposedRows: proposedRaw.map(mapHolding),
+      targetRows, targetSegs, compareRows, sells, buys, mappings,
+    };
+  }
+}
+</script>
+</body>
+</html>
